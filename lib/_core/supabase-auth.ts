@@ -9,6 +9,7 @@ export type AuthUser = {
   email: string;
   role: "customer" | "mechanic";
   profileCompleted: boolean;
+  emailConfirmed: boolean;
 };
 
 export type AuthError = {
@@ -92,20 +93,46 @@ class SupabaseAuthClient {
     role: "customer" | "mechanic"
   ): Promise<{ user: AuthUser; session: string }> {
     try {
+      console.log("[SupabaseAuth] Starting sign-up for:", email);
+      
+      // Validate inputs
+      if (!email || !password) {
+        throw {
+          code: "invalid_input",
+          message: "Email and password are required",
+        };
+      }
+
       // Sign up with Supabase Auth
+      console.log("[SupabaseAuth] Calling /signup endpoint...");
       const response = await this.apiCall("/signup", "POST", {
         email,
         password,
         data: { role, profileCompleted: false },
       });
 
+      console.log("[SupabaseAuth] Sign-up response received:", {
+        hasUser: !!response.user,
+        userId: response.user?.id,
+        email: response.user?.email,
+        hasSession: !!response.session,
+      });
+
       if (!response.user) {
         const errorMsg = response.error_description || response.message || "Failed to create account";
+        console.error("[SupabaseAuth] No user in response:", response);
         throw {
           code: response.error_code || "signup_failed",
           message: errorMsg,
         };
       }
+
+      const emailConfirmed = response.user?.email_confirmed_at !== null;
+      console.log("[SupabaseAuth] Sign-up successful:", {
+        userId: response.user.id,
+        email: response.user.email,
+        emailConfirmed,
+      });
 
       return {
         user: {
@@ -113,11 +140,16 @@ class SupabaseAuthClient {
           email: response.user.email,
           role,
           profileCompleted: false,
+          emailConfirmed,
         },
         session: response.session?.access_token || "",
       };
     } catch (error: any) {
-      console.error("[SupabaseAuth] Sign-up failed:", error);
+      console.error("[SupabaseAuth] Sign-up failed:", {
+        code: error?.code,
+        message: error?.message,
+        fullError: error,
+      });
       // Return the error with real Supabase message if available
       throw {
         code: error?.code || "signup_failed",
@@ -143,6 +175,7 @@ class SupabaseAuthClient {
 
       const role = response.user.user_metadata?.role || "customer";
       const profileCompleted = response.user.user_metadata?.profileCompleted || false;
+      const emailConfirmed = response.user?.email_confirmed_at !== null;
 
       return {
         user: {
@@ -150,6 +183,7 @@ class SupabaseAuthClient {
           email: response.user.email,
           role,
           profileCompleted,
+          emailConfirmed,
         },
         session: response.access_token || "",
       };
@@ -206,6 +240,107 @@ class SupabaseAuthClient {
     // This will be implemented in the store/auth provider
     // For now, return null (token will be managed by useAuth hook)
     return null;
+  }
+
+  async resendVerificationEmail(email: string): Promise<void> {
+    try {
+      await this.apiCall("/resend", "POST", { email, type: "signup" });
+      console.log("[SupabaseAuth] Verification email resent to:", email);
+    } catch (error: any) {
+      console.error("[SupabaseAuth] Resend verification email failed:", error);
+      throw {
+        code: error?.code || "resend_failed",
+        message: error?.message || "Failed to resend verification email",
+      };
+    }
+  }
+
+  /**
+   * Get current authenticated user from Supabase Auth endpoint
+   * Requires a valid session token (JWT)
+   */
+  async getCurrentUser(sessionToken: string): Promise<AuthUser | null> {
+    try {
+      if (!sessionToken) {
+        console.warn("[SupabaseAuth] getCurrentUser called without session token");
+        return null;
+      }
+
+      const url = `${this.supabaseUrl}/auth/v1/user`;
+      console.log("[SupabaseAuth] Fetching current user from:", url);
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: this.supabaseKey,
+          Authorization: `Bearer ${sessionToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error("[SupabaseAuth] Failed to fetch current user:", error);
+        return null;
+      }
+
+      const data = await response.json();
+      const supabaseUser = data.user;
+
+      if (!supabaseUser || !supabaseUser.id) {
+        console.warn("[SupabaseAuth] No user found in response");
+        return null;
+      }
+
+      // Extract user metadata (role, profileCompleted, etc.)
+      const metadata = supabaseUser.user_metadata || {};
+
+      const authUser: AuthUser = {
+        id: supabaseUser.id,
+        email: supabaseUser.email || "",
+        role: metadata.role || "customer",
+        profileCompleted: metadata.profileCompleted || false,
+        emailConfirmed: supabaseUser.email_confirmed_at !== null,
+      };
+
+      console.log("[SupabaseAuth] Current user fetched:", {
+        id: authUser.id,
+        email: authUser.email,
+        role: authUser.role,
+      });
+
+      return authUser;
+    } catch (error: any) {
+      console.error("[SupabaseAuth] getCurrentUser failed:", error);
+      return null;
+    }
+  }
+
+  async checkEmailConfirmed(sessionToken: string): Promise<boolean> {
+    try {
+      const url = `${this.supabaseUrl}/auth/v1/user`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: this.supabaseKey,
+          Authorization: `Bearer ${sessionToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        console.error("[SupabaseAuth] Failed to check email confirmation status");
+        return false;
+      }
+
+      const data = await response.json();
+      const emailConfirmed = data.user?.email_confirmed_at !== null;
+      console.log("[SupabaseAuth] Email confirmed:", emailConfirmed);
+      return emailConfirmed;
+    } catch (error: any) {
+      console.error("[SupabaseAuth] Check email confirmed failed:", error);
+      return false;
+    }
   }
 }
 

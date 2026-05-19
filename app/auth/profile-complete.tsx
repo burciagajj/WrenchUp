@@ -15,6 +15,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { useStore } from "@/lib/store";
 import { useAuth, useLoadUserData } from "@/lib/auth-context";
 import { supabaseUserData } from "@/lib/_core/supabase-user-data";
+import { supabaseAuth } from "@/lib/_core/supabase-auth";
 import * as Haptics from "expo-haptics";
 
 export default function ProfileCompleteScreen() {
@@ -91,21 +92,12 @@ export default function ProfileCompleteScreen() {
     return true;
   };
 
-  const handleCustomerComplete = async () => {
-    if (!validateCustomerForm()) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      return;
-    }
+  const handleSaveCustomer = async () => {
+    if (!validateCustomerForm()) return;
 
     // Wait for auth to load
     if (isAuthLoading) {
       setError("Loading authentication...");
-      return;
-    }
-
-    if (!user || !user.id) {
-      setError("Not authenticated. Please sign up again.");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
@@ -120,12 +112,35 @@ export default function ProfileCompleteScreen() {
       if (!sessionToken) {
         setError("Session expired. Please log in again.");
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        setLoading(false);
+        return;
+      }
+
+      // Get current user ID - either from context or fetch from Supabase auth
+      let userId = user?.id;
+      if (!userId) {
+        console.log("[ProfileComplete] User ID not in context, fetching from Supabase auth...");
+        const currentUser = await supabaseAuth.getCurrentUser(sessionToken);
+        if (!currentUser || !currentUser.id) {
+          setError("Failed to get user information. Please log in again.");
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          setLoading(false);
+          return;
+        }
+        userId = currentUser.id;
+        console.log("[ProfileComplete] User ID fetched from Supabase:", userId);
+      }
+
+      if (!user?.email) {
+        setError("Email not found. Please sign up again.");
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        setLoading(false);
         return;
       }
 
       // Save vehicle to Supabase (per-user)
       await supabaseUserData.addVehicle(
-        user.id,
+        userId,
         {
           nickname: vehicleNickname,
           year: parseInt(vehicleYear),
@@ -159,7 +174,6 @@ export default function ProfileCompleteScreen() {
       return;
     }
 
-    // Wait for auth to load
     if (isAuthLoading) {
       setError("Loading authentication...");
       return;
@@ -167,6 +181,12 @@ export default function ProfileCompleteScreen() {
 
     if (!user || !user.id) {
       setError("Not authenticated. Please sign up again.");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return;
+    }
+
+    if (!user.email) {
+      setError("Email not found. Please sign up again.");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
@@ -185,12 +205,13 @@ export default function ProfileCompleteScreen() {
         return;
       }
 
-      // Update profile in Supabase (per-user)
+      // Update profile with mechanic info
       await supabaseUserData.updateProfile(
         user.id,
         {
-          name: mechanicName,
+          full_name: mechanicName,
           bio: mechanicBio,
+          email: user.email,
         },
         sessionToken
       );
@@ -211,187 +232,228 @@ export default function ProfileCompleteScreen() {
     }
   };
 
-  // Show loading screen while auth is loading
   if (isAuthLoading) {
     return (
-      <ScreenContainer className="flex items-center justify-center">
-        <ActivityIndicator size="large" />
-        <Text className="mt-4 text-muted">Loading authentication...</Text>
+      <ScreenContainer className="items-center justify-center">
+        <ActivityIndicator size="large" color="#F97316" />
       </ScreenContainer>
     );
   }
 
-  if (isCustomer) {
-    return (
-      <ScreenContainer className="bg-background">
-        <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="px-6 py-8">
-          {/* Header */}
-          <View className="mb-8">
-            <Text className="text-3xl font-bold text-foreground mb-2">Add Your Vehicle</Text>
-            <Text className="text-base text-muted">We need this to provide accurate service estimates</Text>
-          </View>
-
-          {/* Error Message */}
-          {error && (
-            <View className="mb-6 p-4 bg-error/10 rounded-lg border border-error">
-              <Text className="text-error font-medium">{error}</Text>
-            </View>
-          )}
-
-          {/* Nickname */}
-          <View className="mb-5">
-            <Text className="text-sm font-semibold text-foreground mb-2">Nickname</Text>
-            <TextInput
-              value={vehicleNickname}
-              onChangeText={setVehicleNickname}
-              placeholder="e.g., My Tesla, Daily Driver"
-              placeholderTextColor="#999"
-              editable={!loading}
-              className="px-4 py-3 bg-surface border border-border rounded-lg text-foreground"
-            />
-          </View>
-
-          {/* Year */}
-          <View className="mb-5">
-            <Text className="text-sm font-semibold text-foreground mb-2">Year</Text>
-            <TextInput
-              value={vehicleYear}
-              onChangeText={setVehicleYear}
-              placeholder="2024"
-              placeholderTextColor="#999"
-              keyboardType="number-pad"
-              editable={!loading}
-              className="px-4 py-3 bg-surface border border-border rounded-lg text-foreground"
-            />
-          </View>
-
-          {/* Make */}
-          <View className="mb-5">
-            <Text className="text-sm font-semibold text-foreground mb-2">Make</Text>
-            <TextInput
-              value={vehicleMake}
-              onChangeText={setVehicleMake}
-              placeholder="e.g., Toyota"
-              placeholderTextColor="#999"
-              editable={!loading}
-              className="px-4 py-3 bg-surface border border-border rounded-lg text-foreground"
-            />
-          </View>
-
-          {/* Model */}
-          <View className="mb-5">
-            <Text className="text-sm font-semibold text-foreground mb-2">Model</Text>
-            <TextInput
-              value={vehicleModel}
-              onChangeText={setVehicleModel}
-              placeholder="e.g., Camry"
-              placeholderTextColor="#999"
-              editable={!loading}
-              className="px-4 py-3 bg-surface border border-border rounded-lg text-foreground"
-            />
-          </View>
-
-          {/* Color */}
-          <View className="mb-8">
-            <Text className="text-sm font-semibold text-foreground mb-2">Color (Optional)</Text>
-            <TextInput
-              value={vehicleColor}
-              onChangeText={setVehicleColor}
-              placeholder="e.g., Silver"
-              placeholderTextColor="#999"
-              editable={!loading}
-              className="px-4 py-3 bg-surface border border-border rounded-lg text-foreground"
-            />
-          </View>
-
-          {/* Complete Button */}
-          <Pressable
-            onPress={handleCustomerComplete}
-            disabled={loading}
-            className={`py-4 rounded-lg flex-row items-center justify-center ${
-              loading ? "bg-primary/50" : "bg-primary"
-            }`}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Text className="text-white font-bold text-lg">Continue</Text>
-            )}
-          </Pressable>
-
-          {/* Skip Link */}
-          <Pressable onPress={() => router.replace("/(tabs)")} className="mt-4">
-            <Text className="text-center text-muted font-medium">Skip for now</Text>
-          </Pressable>
-        </ScrollView>
-      </ScreenContainer>
-    );
-  }
-
-  // Mechanic profile completion
   return (
-    <ScreenContainer className="bg-background">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="px-6 py-8">
-        {/* Header */}
-        <View className="mb-8">
-          <Text className="text-3xl font-bold text-foreground mb-2">Complete Your Profile</Text>
-          <Text className="text-base text-muted">Help customers find you</Text>
+    <ScreenContainer>
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+        <View style={{ paddingHorizontal: 20, paddingTop: 20 }}>
+          <Text style={{ fontSize: 28, fontWeight: "800", color: "#0F172A", marginBottom: 8 }}>
+            {isCustomer ? "Add Your Vehicle" : "Complete Your Profile"}
+          </Text>
+          <Text style={{ fontSize: 14, color: "#64748B", lineHeight: 20 }}>
+            {isCustomer
+              ? "Tell us about your vehicle so mechanics can help you better"
+              : "Set up your mechanic profile to start accepting jobs"}
+          </Text>
         </View>
 
-        {/* Error Message */}
+        {/* Error message */}
         {error && (
-          <View className="mb-6 p-4 bg-error/10 rounded-lg border border-error">
-            <Text className="text-error font-medium">{error}</Text>
+          <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
+            <View style={{ backgroundColor: "#FEE2E2", borderRadius: 12, padding: 12, borderLeftWidth: 4, borderLeftColor: "#DC2626" }}>
+              <Text style={{ color: "#991B1B", fontSize: 14, fontWeight: "600" }}>{error}</Text>
+            </View>
           </View>
         )}
 
-        {/* Name */}
-        <View className="mb-5">
-          <Text className="text-sm font-semibold text-foreground mb-2">Full Name</Text>
-          <TextInput
-            value={mechanicName}
-            onChangeText={setMechanicName}
-            placeholder="Your name"
-            placeholderTextColor="#999"
-            editable={!loading}
-            className="px-4 py-3 bg-surface border border-border rounded-lg text-foreground"
-          />
-        </View>
+        {/* Customer form */}
+        {isCustomer ? (
+          <View style={{ paddingHorizontal: 20, marginTop: 24, gap: 16 }}>
+            {/* Nickname */}
+            <View>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Nickname</Text>
+              <TextInput
+                placeholder="e.g., My Honda"
+                value={vehicleNickname}
+                onChangeText={setVehicleNickname}
+                editable={!loading}
+                style={{
+                  borderWidth: 1,
+                  borderColor: "#E2E8F0",
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: "#0F172A",
+                }}
+              />
+            </View>
 
-        {/* Bio */}
-        <View className="mb-8">
-          <Text className="text-sm font-semibold text-foreground mb-2">Bio (Optional)</Text>
-          <TextInput
-            value={mechanicBio}
-            onChangeText={setMechanicBio}
-            placeholder="Tell customers about your experience"
-            placeholderTextColor="#999"
-            multiline
-            numberOfLines={4}
-            editable={!loading}
-            className="px-4 py-3 bg-surface border border-border rounded-lg text-foreground"
-          />
-        </View>
+            {/* Year and Make */}
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Year</Text>
+                <TextInput
+                  placeholder="2020"
+                  value={vehicleYear}
+                  onChangeText={setVehicleYear}
+                  keyboardType="number-pad"
+                  editable={!loading}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: "#E2E8F0",
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    fontSize: 14,
+                    color: "#0F172A",
+                  }}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Make</Text>
+                <TextInput
+                  placeholder="Honda"
+                  value={vehicleMake}
+                  onChangeText={setVehicleMake}
+                  editable={!loading}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: "#E2E8F0",
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    fontSize: 14,
+                    color: "#0F172A",
+                  }}
+                />
+              </View>
+            </View>
 
-        {/* Complete Button */}
-        <Pressable
-          onPress={handleMechanicComplete}
-          disabled={loading}
-          className={`py-4 rounded-lg flex-row items-center justify-center ${
-            loading ? "bg-primary/50" : "bg-primary"
-          }`}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <Text className="text-white font-bold text-lg">Get Started</Text>
-          )}
-        </Pressable>
+            {/* Model */}
+            <View>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Model</Text>
+              <TextInput
+                placeholder="Civic"
+                value={vehicleModel}
+                onChangeText={setVehicleModel}
+                editable={!loading}
+                style={{
+                  borderWidth: 1,
+                  borderColor: "#E2E8F0",
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: "#0F172A",
+                }}
+              />
+            </View>
 
-        {/* Skip Link */}
-        <Pressable onPress={() => router.replace("/(tabs)")} className="mt-4">
-          <Text className="text-center text-muted font-medium">Skip for now</Text>
-        </Pressable>
+            {/* Color */}
+            <View>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Color (optional)</Text>
+              <TextInput
+                placeholder="Blue"
+                value={vehicleColor}
+                onChangeText={setVehicleColor}
+                editable={!loading}
+                style={{
+                  borderWidth: 1,
+                  borderColor: "#E2E8F0",
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: "#0F172A",
+                }}
+              />
+            </View>
+
+            {/* Save button */}
+            <Pressable
+              onPress={handleSaveCustomer}
+              disabled={loading}
+              style={({ pressed }) => ({
+                backgroundColor: loading ? "#CBD5E1" : "#F97316",
+                paddingVertical: 14,
+                borderRadius: 8,
+                alignItems: "center",
+                marginTop: 8,
+                opacity: pressed ? 0.9 : 1,
+              })}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700" }}>Save Vehicle</Text>
+              )}
+            </Pressable>
+          </View>
+        ) : (
+          /* Mechanic form */
+          <View style={{ paddingHorizontal: 20, marginTop: 24, gap: 16 }}>
+            {/* Name */}
+            <View>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Full Name</Text>
+              <TextInput
+                placeholder="Your name"
+                value={mechanicName}
+                onChangeText={setMechanicName}
+                editable={!loading}
+                style={{
+                  borderWidth: 1,
+                  borderColor: "#E2E8F0",
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: "#0F172A",
+                }}
+              />
+            </View>
+
+            {/* Bio */}
+            <View>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Bio (optional)</Text>
+              <TextInput
+                placeholder="Tell customers about your experience..."
+                value={mechanicBio}
+                onChangeText={setMechanicBio}
+                multiline
+                numberOfLines={4}
+                editable={!loading}
+                style={{
+                  borderWidth: 1,
+                  borderColor: "#E2E8F0",
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: "#0F172A",
+                  textAlignVertical: "top",
+                }}
+              />
+            </View>
+
+            {/* Save button */}
+            <Pressable
+              onPress={handleMechanicComplete}
+              disabled={loading}
+              style={({ pressed }) => ({
+                backgroundColor: loading ? "#CBD5E1" : "#F97316",
+                paddingVertical: 14,
+                borderRadius: 8,
+                alignItems: "center",
+                marginTop: 8,
+                opacity: pressed ? 0.9 : 1,
+              })}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700" }}>Complete Profile</Text>
+              )}
+            </Pressable>
+          </View>
+        )}
       </ScrollView>
     </ScreenContainer>
   );
