@@ -91,7 +91,7 @@ class SupabaseAuthClient {
     email: string,
     password: string,
     role: "customer" | "mechanic"
-  ): Promise<{ user: AuthUser; session: string }> {
+  ): Promise<{ user: AuthUser; session: string; refreshToken?: string }> {
     try {
       console.log("[SupabaseAuth] Starting sign-up for:", email);
       
@@ -143,6 +143,7 @@ class SupabaseAuthClient {
           emailConfirmed,
         },
         session: response.session?.access_token || "",
+        refreshToken: response.session?.refresh_token,
       };
     } catch (error: any) {
       console.error("[SupabaseAuth] Sign-up failed:", {
@@ -158,7 +159,7 @@ class SupabaseAuthClient {
     }
   }
 
-  async signIn(email: string, password: string): Promise<{ user: AuthUser; session: string }> {
+  async signIn(email: string, password: string): Promise<{ user: AuthUser; session: string; refreshToken?: string }> {
     try {
       const response = await this.apiCall("/token?grant_type=password", "POST", {
         email,
@@ -186,12 +187,56 @@ class SupabaseAuthClient {
           emailConfirmed,
         },
         session: response.access_token || "",
+        refreshToken: response.refresh_token,
       };
     } catch (error: any) {
       console.error("[SupabaseAuth] Sign-in failed:", error);
       throw {
         code: error?.code || "signin_failed",
         message: error?.message || "Invalid email or password",
+      };
+    }
+  }
+
+  /**
+   * Refresh an expired session token using refresh token
+   * Supabase stores refresh_token in the response during signup/signin
+   * This method attempts to get a new access token
+   */
+  async refreshSession(refreshToken: string): Promise<{ access_token: string; refresh_token: string }> {
+    try {
+      if (!refreshToken) {
+        throw {
+          code: "no_refresh_token",
+          message: "No refresh token available",
+        };
+      }
+
+      console.log("[SupabaseAuth] Attempting to refresh session...");
+
+      const response = await this.apiCall("/token?grant_type=refresh_token", "POST", {
+        refresh_token: refreshToken,
+      });
+
+      if (!response.access_token) {
+        console.error("[SupabaseAuth] No access token in refresh response:", response);
+        throw {
+          code: "refresh_failed",
+          message: "Failed to refresh session",
+        };
+      }
+
+      console.log("[SupabaseAuth] Session refreshed successfully");
+
+      return {
+        access_token: response.access_token,
+        refresh_token: response.refresh_token || refreshToken,
+      };
+    } catch (error: any) {
+      console.error("[SupabaseAuth] Session refresh failed:", error);
+      throw {
+        code: error?.code || "refresh_failed",
+        message: error?.message || "Failed to refresh session",
       };
     }
   }

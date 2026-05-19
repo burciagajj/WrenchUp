@@ -16,6 +16,7 @@ import { useStore } from "@/lib/store";
 import { useAuth, useLoadUserData } from "@/lib/auth-context";
 import { supabaseUserData } from "@/lib/_core/supabase-user-data";
 import { supabaseAuth } from "@/lib/_core/supabase-auth";
+import { getRefreshToken, updateSessionToken } from "@/lib/auth-context";
 import * as Haptics from "expo-haptics";
 
 export default function ProfileCompleteScreen() {
@@ -108,12 +109,27 @@ export default function ProfileCompleteScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
       // Get session token
-      const sessionToken = await getSessionToken();
+      let sessionToken = await getSessionToken();
       if (!sessionToken) {
         setError("Session expired. Please log in again.");
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         setLoading(false);
         return;
+      }
+
+      // Attempt to refresh session before saving
+      try {
+        const refreshToken = await getRefreshToken();
+        if (refreshToken) {
+          console.log("[ProfileComplete] Refreshing session before saving vehicle...");
+          const refreshResult = await supabaseAuth.refreshSession(refreshToken);
+          sessionToken = refreshResult.access_token;
+          await updateSessionToken(sessionToken, refreshResult.refresh_token);
+          console.log("[ProfileComplete] Session refreshed successfully");
+        }
+      } catch (refreshErr) {
+        console.warn("[ProfileComplete] Session refresh failed, continuing with existing token:", refreshErr);
+        // Continue with original token
       }
 
       // Get current user ID - either from context or fetch from Supabase auth
@@ -198,11 +214,27 @@ export default function ProfileCompleteScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
       // Get session token
-      const sessionToken = await getSessionToken();
+      let sessionToken = await getSessionToken();
       if (!sessionToken) {
         setError("Session expired. Please log in again.");
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        setLoading(false);
         return;
+      }
+
+      // Attempt to refresh session before saving
+      try {
+        const refreshToken = await getRefreshToken();
+        if (refreshToken) {
+          console.log("[ProfileComplete] Refreshing session before saving profile...");
+          const refreshResult = await supabaseAuth.refreshSession(refreshToken);
+          sessionToken = refreshResult.access_token;
+          await updateSessionToken(sessionToken, refreshResult.refresh_token);
+          console.log("[ProfileComplete] Session refreshed successfully");
+        }
+      } catch (refreshErr) {
+        console.warn("[ProfileComplete] Session refresh failed, continuing with existing token:", refreshErr);
+        // Continue with original token
       }
 
       // Update profile with mechanic info
