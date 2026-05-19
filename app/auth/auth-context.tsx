@@ -8,10 +8,21 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { supabaseAuth, type AuthUser } from "./auth-context-types";
+import { supabaseAuth } from "./_core/supabase-auth";
 import { supabaseUserData } from "./_core/supabase-user-data";
 import { useStore } from "./store";
 import type { Vehicle } from "./types";
+
+/**
+ * Auth user type - matches Supabase auth response
+ */
+export type AuthUser = {
+  id: string;
+  email: string;
+  role: "customer" | "mechanic";
+  profileCompleted: boolean;
+  emailConfirmed: boolean;
+};
 
 const SESSION_TOKEN_KEY = "wrenchup_session_token";
 const REFRESH_TOKEN_KEY = "wrenchup_refresh_token";
