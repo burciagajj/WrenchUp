@@ -8,7 +8,7 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { supabaseAuth } from "./_core/supabase-auth";
+import { supabaseAuth } from "@/lib/_core/supabase-auth";
 import { supabaseUserData } from "./_core/supabase-user-data";
 import { useStore } from "./store";
 import type { Vehicle } from "./types";
