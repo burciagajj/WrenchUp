@@ -8,12 +8,24 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { supabaseAuth, type AuthUser } from "./auth-context-types";
-import { supabaseUserData } from "./_core/supabase-user-data";
-import { useStore } from "./store";
-import type { Vehicle } from "./types";
+import { supabaseAuth } from "@/lib/_core/supabase-auth";
+import { supabaseUserData } from "@/lib/_core/supabase-user-data";
+import { useStore } from "@/lib/store";
+import type { Vehicle } from "@/lib/types";
+
+/**
+ * Auth user type - matches Supabase auth response
+ */
+export type AuthUser = {
+  id: string;
+  email: string;
+  role: "customer" | "mechanic";
+  profileCompleted: boolean;
+  emailConfirmed: boolean;
+};
 
 const SESSION_TOKEN_KEY = "wrenchup_session_token";
+const REFRESH_TOKEN_KEY = "wrenchup_refresh_token";
 const AUTH_USER_KEY = "wrenchup_auth_user";
 
 export type AuthContextType = {
@@ -84,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     restoreSession();
   }, [restoreSession]);
 
-  const saveSession = useCallback(async (authUser: AuthUser, sessionToken: string) => {
+  const saveSession = useCallback(async (authUser: AuthUser, sessionToken: string, refreshToken?: string) => {
     try {
       console.log("[AuthContext] Saving session for:", authUser.email);
       
@@ -97,10 +109,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (sessionToken) {
           await AsyncStorage.setItem(SESSION_TOKEN_KEY, sessionToken);
         }
+        if (refreshToken) {
+          await AsyncStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+        }
       } else {
         await SecureStore.setItemAsync(AUTH_USER_KEY, JSON.stringify(authUser));
         if (sessionToken) {
           await SecureStore.setItemAsync(SESSION_TOKEN_KEY, sessionToken);
+        }
+        if (refreshToken) {
+          await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
         }
       }
       console.log("[AuthContext] Session saved successfully for", authUser.email);
@@ -114,9 +132,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       if (Platform.OS === "web") {
         await AsyncStorage.removeItem(SESSION_TOKEN_KEY);
+        await AsyncStorage.removeItem(REFRESH_TOKEN_KEY);
         await AsyncStorage.removeItem(AUTH_USER_KEY);
       } else {
         await SecureStore.deleteItemAsync(SESSION_TOKEN_KEY);
+        await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
         await SecureStore.deleteItemAsync(AUTH_USER_KEY);
       }
       setUser(null);
@@ -129,8 +149,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string) => {
       try {
         setError(null);
-        const { user: authUser, session } = await supabaseAuth.signIn(email, password);
-        await saveSession(authUser, session);
+        const { user: authUser, session, refreshToken } = await supabaseAuth.signIn(email, password);
+        await saveSession(authUser, session, refreshToken);
       } catch (err: any) {
         const message = err?.message || (err instanceof Error ? err.message : "Sign-in failed");
         console.error("[AuthContext] Sign-in error:", err);
@@ -145,8 +165,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string, role: "customer" | "mechanic") => {
       try {
         setError(null);
-        const { user: authUser, session } = await supabaseAuth.signUp(email, password, role);
-        await saveSession(authUser, session);
+        const { user: authUser, session, refreshToken } = await supabaseAuth.signUp(email, password, role);
+        await saveSession(authUser, session, refreshToken);
+        // Note: Redirect to verify-email happens in signup.tsx
       } catch (err: any) {
         const message = err?.message || (err instanceof Error ? err.message : "Sign-up failed");
         console.error("[AuthContext] Sign-up error:", err);
@@ -202,9 +223,42 @@ export function useAuth(): AuthContextType {
 }
 
 /**
- * Hook to load user data from Supabase when user logs in
- * Call this in profile-complete.tsx and signin.tsx after auth succeeds
+ * Helper to get refresh token from storage
  */
+export async function getRefreshToken(): Promise<string | null> {
+  try {
+    if (Platform.OS === "web") {
+      return await AsyncStorage.getItem(REFRESH_TOKEN_KEY);
+    } else {
+      return await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+    }
+  } catch (err) {
+    console.error("[AuthContext] Failed to get refresh token:", err);
+    return null;
+  }
+}
+
+/**
+ * Helper to update session token in storage (used after refresh)
+ */
+export async function updateSessionToken(newToken: string, newRefreshToken?: string): Promise<void> {
+  try {
+    if (Platform.OS === "web") {
+      await AsyncStorage.setItem(SESSION_TOKEN_KEY, newToken);
+      if (newRefreshToken) {
+        await AsyncStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken);
+      }
+    } else {
+      await SecureStore.setItemAsync(SESSION_TOKEN_KEY, newToken);
+      if (newRefreshToken) {
+        await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, newRefreshToken);
+      }
+    }
+  } catch (err) {
+    console.error("[AuthContext] Failed to update session token:", err);
+  }
+}
+
 export function useLoadUserData() {
   const { user } = useAuth();
   const { dispatch } = useStore();
@@ -247,7 +301,7 @@ export function useLoadUserData() {
         dispatch({
           type: "LOAD_USER_DATA",
           payload: {
-            userName: profile.name || user.email,
+            userName: profile.full_name || user.email,
             vehicles,
             selectedVehicleId,
           },

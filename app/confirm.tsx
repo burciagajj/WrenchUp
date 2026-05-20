@@ -17,7 +17,7 @@ import { StripePaymentSheet } from "@/components/stripe-payment-sheet";
 import { usePaymentSheet } from "@/hooks/use-payment-sheet";
 import { amountToStripeAmount, getCurrencyForRegion } from "@/lib/stripe";
 import { useState } from "react";
-import { Platform } from "react-native";
+import { Platform, TextInput } from "react-native";
 
 export default function ConfirmScreen() {
   const router = useRouter();
@@ -28,6 +28,7 @@ export default function ConfirmScreen() {
     state.defaultPaymentMethodId
   );
   const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [showPriceEdit, setShowPriceEdit] = useState(false);
 
   const mechanic = typeof mechanicId === "string" ? getMechanic(mechanicId) : undefined;
   const serviceType = typeof service === "string" ? getServiceType(service) : undefined;
@@ -45,6 +46,9 @@ export default function ConfirmScreen() {
   }
 
   const fare = computeFare(mechanic, serviceType);
+  const [editedPrice, setEditedPrice] = useState<string>(
+    fare && fare.total ? fare.total.toFixed(2) : ""
+  );
 
   const handleConfirmPayment = async (methodId: string) => {
     if (!vehicle) {
@@ -90,6 +94,10 @@ export default function ConfirmScreen() {
       haptic.success();
       const pickup = state.userCoords ?? DEFAULT_COORDS;
       const start = mechanicCoords(mechanic, pickup);
+      // Use edited price if provided, otherwise use calculated fare
+      const finalPrice = editedPrice && parseFloat(editedPrice) > 0 ? parseFloat(editedPrice) : fare.total;
+      const adjustedFare = { ...fare, total: finalPrice };
+      
       const job: Job = {
         id: `j_${Date.now()}`,
         mechanicId: mechanic.id,
@@ -98,7 +106,7 @@ export default function ConfirmScreen() {
         location: state.defaultLocation,
         status: "searching",
         createdAt: Date.now(),
-        fare,
+        fare: adjustedFare,
         pickup,
         mechanicStart: start,
         paymentMethodId: methodId,
@@ -169,9 +177,50 @@ export default function ConfirmScreen() {
           <Divider />
         </View>
 
+        {/* Price Edit Section */}
+        <View style={styles.card}>
+          <Pressable
+            onPress={() => setShowPriceEdit(!showPriceEdit)}
+            style={({ pressed }) => ({
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "center",
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <Text style={styles.priceEditLabel}>Adjust Price (Optional)</Text>
+            <IconSymbol
+              name={showPriceEdit ? "chevron.up" : "chevron.down"}
+              size={20}
+              color="#F97316"
+            />
+          </Pressable>
+          {showPriceEdit && (
+            <View style={{ marginTop: 12 }}>
+              <Text style={styles.priceEditHint}>
+                Suggest a different price. Mechanic will review and accept or counter.
+              </Text>
+              <View style={styles.priceInputRow}>
+                <Text style={styles.currencySymbol}>$</Text>
+                <TextInput
+                  style={styles.priceInput}
+                  placeholder={fare.total?.toFixed(2)}
+                  placeholderTextColor="#CBD5E1"
+                  value={editedPrice}
+                  onChangeText={setEditedPrice}
+                  keyboardType="decimal-pad"
+                />
+              </View>
+              <Text style={styles.priceEditNote}>
+                Original price: {formatPrice(fare.total || 0)}
+              </Text>
+            </View>
+          )}
+        </View>
+
         {/* Payment Method Selection */}
         <StripePaymentSheet
-          amount={Math.round((fare.total || 0) * 100)}
+          amount={Math.round((editedPrice && parseFloat(editedPrice) > 0 ? parseFloat(editedPrice) : (fare?.total || 0)) * 100)}
           currency={locale === "es-MX" ? "mxn" : "usd"}
           savedMethods={state.paymentMethods}
           defaultMethodId={state.defaultPaymentMethodId}
@@ -271,6 +320,22 @@ const styles = StyleSheet.create({
   totalLabel: { fontSize: 15, fontWeight: "800", color: "#0F172A" },
   totalValue: { fontSize: 20, fontWeight: "800", color: "#F97316" },
   disclaimer: { fontSize: 11, color: "#64748B", marginTop: 10, lineHeight: 16 },
+  priceEditLabel: { fontSize: 14, fontWeight: "600", color: "#0F172A" },
+  priceEditHint: { fontSize: 12, color: "#64748B", marginBottom: 12, lineHeight: 16 },
+  priceInputRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  currencySymbol: { fontSize: 18, fontWeight: "700", color: "#0F172A" },
+  priceInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    color: "#0F172A",
+    fontWeight: "600",
+  },
+  priceEditNote: { fontSize: 11, color: "#94A3B8", fontStyle: "italic" },
   footer: {
     position: "absolute",
     left: 0,
