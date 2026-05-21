@@ -1,12 +1,10 @@
 /**
  * Profile Completion Screen (v1.6)
  * Post-signup profile setup for customers and mechanics
- * Now saves data to Supabase with per-user isolation
- * Customers: Add first vehicle
- * Mechanics: Basic info (name, photo, services)
+ * Now skips for customers who already have vehicles
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, ActivityIndicator, Platform } from "react-native";
 import { router } from "expo-router";
 import * as SecureStore from "expo-secure-store";
@@ -18,6 +16,8 @@ import { supabaseUserData } from "@/lib/_core/supabase-user-data";
 import { supabaseAuth } from "@/lib/_core/supabase-auth";
 import { getRefreshToken, updateSessionToken } from "@/lib/auth-context";
 import * as Haptics from "expo-haptics";
+
+import { userHasVehicles } from "@/lib/vehicles";   // ← Added for vehicle check
 
 export default function ProfileCompleteScreen() {
   const { state, dispatch } = useStore();
@@ -39,6 +39,26 @@ export default function ProfileCompleteScreen() {
   // Common state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Skip screen if customer already has vehicles
+  useEffect(() => {
+    const checkExistingVehicles = async () => {
+      if (!user?.id || !isCustomer) return;
+
+      try {
+        const hasVehicles = await userHasVehicles(user.id);
+        if (hasVehicles) {
+          console.log("✅ User already has vehicles → skipping Add Vehicle screen");
+          router.replace("/(tabs)");
+        }
+      } catch (err) {
+        console.error("Error checking vehicles:", err);
+        // Continue to show the screen as fallback
+      }
+    };
+
+    checkExistingVehicles();
+  }, [user?.id, isCustomer]);
 
   const getSessionToken = async (): Promise<string | null> => {
     try {
@@ -96,7 +116,6 @@ export default function ProfileCompleteScreen() {
   const handleSaveCustomer = async () => {
     if (!validateCustomerForm()) return;
 
-    // Wait for auth to load
     if (isAuthLoading) {
       setError("Loading authentication...");
       return;
@@ -108,7 +127,6 @@ export default function ProfileCompleteScreen() {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      // Get session token
       let sessionToken = await getSessionToken();
       if (!sessionToken) {
         setError("Session expired. Please log in again.");
@@ -117,44 +135,30 @@ export default function ProfileCompleteScreen() {
         return;
       }
 
-      // Attempt to refresh session before saving
+      // Refresh session if possible
       try {
         const refreshToken = await getRefreshToken();
         if (refreshToken) {
-          console.log("[ProfileComplete] Refreshing session before saving vehicle...");
           const refreshResult = await supabaseAuth.refreshSession(refreshToken);
           sessionToken = refreshResult.access_token;
           await updateSessionToken(sessionToken, refreshResult.refresh_token);
-          console.log("[ProfileComplete] Session refreshed successfully");
         }
       } catch (refreshErr) {
-        console.warn("[ProfileComplete] Session refresh failed, continuing with existing token:", refreshErr);
-        // Continue with original token
+        console.warn("[ProfileComplete] Session refresh failed, continuing...", refreshErr);
       }
 
-      // Get current user ID - either from context or fetch from Supabase auth
       let userId = user?.id;
       if (!userId) {
-        console.log("[ProfileComplete] User ID not in context, fetching from Supabase auth...");
         const currentUser = await supabaseAuth.getCurrentUser(sessionToken);
-        if (!currentUser || !currentUser.id) {
-          setError("Failed to get user information. Please log in again.");
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-          setLoading(false);
-          return;
-        }
-        userId = currentUser.id;
-        console.log("[ProfileComplete] User ID fetched from Supabase:", userId);
+        userId = currentUser?.id;
       }
 
-      if (!user?.email) {
-        setError("Email not found. Please sign up again.");
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      if (!userId) {
+        setError("Failed to get user information.");
         setLoading(false);
         return;
       }
 
-      // Save vehicle to Supabase (per-user)
       await supabaseUserData.addVehicle(
         userId,
         {
@@ -168,12 +172,9 @@ export default function ProfileCompleteScreen() {
         sessionToken
       );
 
-      // Load fresh user data from Supabase
       await loadUserData(sessionToken);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-      // Navigate to home
       router.replace("/(tabs)");
     } catch (err) {
       console.error("[ProfileComplete] Error:", err);
@@ -190,20 +191,8 @@ export default function ProfileCompleteScreen() {
       return;
     }
 
-    if (isAuthLoading) {
-      setError("Loading authentication...");
-      return;
-    }
-
-    if (!user || !user.id) {
+    if (isAuthLoading || !user?.id) {
       setError("Not authenticated. Please sign up again.");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      return;
-    }
-
-    if (!user.email) {
-      setError("Email not found. Please sign up again.");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
@@ -213,31 +202,25 @@ export default function ProfileCompleteScreen() {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      // Get session token
       let sessionToken = await getSessionToken();
       if (!sessionToken) {
         setError("Session expired. Please log in again.");
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         setLoading(false);
         return;
       }
 
-      // Attempt to refresh session before saving
+      // Refresh session logic...
       try {
         const refreshToken = await getRefreshToken();
         if (refreshToken) {
-          console.log("[ProfileComplete] Refreshing session before saving profile...");
           const refreshResult = await supabaseAuth.refreshSession(refreshToken);
           sessionToken = refreshResult.access_token;
           await updateSessionToken(sessionToken, refreshResult.refresh_token);
-          console.log("[ProfileComplete] Session refreshed successfully");
         }
       } catch (refreshErr) {
-        console.warn("[ProfileComplete] Session refresh failed, continuing with existing token:", refreshErr);
-        // Continue with original token
+        console.warn("[ProfileComplete] Session refresh failed...", refreshErr);
       }
 
-      // Update profile with mechanic info
       await supabaseUserData.updateProfile(
         user.id,
         {
@@ -248,12 +231,9 @@ export default function ProfileCompleteScreen() {
         sessionToken
       );
 
-      // Load fresh user data from Supabase
       await loadUserData(sessionToken);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-      // Navigate to home
       router.replace("/(tabs)");
     } catch (err) {
       console.error("[ProfileComplete] Error:", err);
@@ -286,7 +266,6 @@ export default function ProfileCompleteScreen() {
           </Text>
         </View>
 
-        {/* Error message */}
         {error && (
           <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
             <View style={{ backgroundColor: "#FEE2E2", borderRadius: 12, padding: 12, borderLeftWidth: 4, borderLeftColor: "#DC2626" }}>
@@ -295,10 +274,9 @@ export default function ProfileCompleteScreen() {
           </View>
         )}
 
-        {/* Customer form */}
         {isCustomer ? (
           <View style={{ paddingHorizontal: 20, marginTop: 24, gap: 16 }}>
-            {/* Nickname */}
+            {/* Vehicle Form Fields - unchanged */}
             <View>
               <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Nickname</Text>
               <TextInput
@@ -306,19 +284,10 @@ export default function ProfileCompleteScreen() {
                 value={vehicleNickname}
                 onChangeText={setVehicleNickname}
                 editable={!loading}
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#E2E8F0",
-                  borderRadius: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  fontSize: 14,
-                  color: "#0F172A",
-                }}
+                style={{ borderWidth: 1, borderColor: "#E2E8F0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: "#0F172A" }}
               />
             </View>
 
-            {/* Year and Make */}
             <View style={{ flexDirection: "row", gap: 12 }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Year</Text>
@@ -328,15 +297,7 @@ export default function ProfileCompleteScreen() {
                   onChangeText={setVehicleYear}
                   keyboardType="number-pad"
                   editable={!loading}
-                  style={{
-                    borderWidth: 1,
-                    borderColor: "#E2E8F0",
-                    borderRadius: 8,
-                    paddingHorizontal: 12,
-                    paddingVertical: 10,
-                    fontSize: 14,
-                    color: "#0F172A",
-                  }}
+                  style={{ borderWidth: 1, borderColor: "#E2E8F0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: "#0F172A" }}
                 />
               </View>
               <View style={{ flex: 1 }}>
@@ -346,20 +307,11 @@ export default function ProfileCompleteScreen() {
                   value={vehicleMake}
                   onChangeText={setVehicleMake}
                   editable={!loading}
-                  style={{
-                    borderWidth: 1,
-                    borderColor: "#E2E8F0",
-                    borderRadius: 8,
-                    paddingHorizontal: 12,
-                    paddingVertical: 10,
-                    fontSize: 14,
-                    color: "#0F172A",
-                  }}
+                  style={{ borderWidth: 1, borderColor: "#E2E8F0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: "#0F172A" }}
                 />
               </View>
             </View>
 
-            {/* Model */}
             <View>
               <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Model</Text>
               <TextInput
@@ -367,19 +319,10 @@ export default function ProfileCompleteScreen() {
                 value={vehicleModel}
                 onChangeText={setVehicleModel}
                 editable={!loading}
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#E2E8F0",
-                  borderRadius: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  fontSize: 14,
-                  color: "#0F172A",
-                }}
+                style={{ borderWidth: 1, borderColor: "#E2E8F0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: "#0F172A" }}
               />
             </View>
 
-            {/* Color */}
             <View>
               <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Color (optional)</Text>
               <TextInput
@@ -387,19 +330,10 @@ export default function ProfileCompleteScreen() {
                 value={vehicleColor}
                 onChangeText={setVehicleColor}
                 editable={!loading}
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#E2E8F0",
-                  borderRadius: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  fontSize: 14,
-                  color: "#0F172A",
-                }}
+                style={{ borderWidth: 1, borderColor: "#E2E8F0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: "#0F172A" }}
               />
             </View>
 
-            {/* Save button */}
             <Pressable
               onPress={handleSaveCustomer}
               disabled={loading}
@@ -412,17 +346,12 @@ export default function ProfileCompleteScreen() {
                 opacity: pressed ? 0.9 : 1,
               })}
             >
-              {loading ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700" }}>Save Vehicle</Text>
-              )}
+              {loading ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700" }}>Save Vehicle</Text>}
             </Pressable>
           </View>
         ) : (
-          /* Mechanic form */
+          /* Mechanic form - unchanged */
           <View style={{ paddingHorizontal: 20, marginTop: 24, gap: 16 }}>
-            {/* Name */}
             <View>
               <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Full Name</Text>
               <TextInput
@@ -430,19 +359,10 @@ export default function ProfileCompleteScreen() {
                 value={mechanicName}
                 onChangeText={setMechanicName}
                 editable={!loading}
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#E2E8F0",
-                  borderRadius: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  fontSize: 14,
-                  color: "#0F172A",
-                }}
+                style={{ borderWidth: 1, borderColor: "#E2E8F0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: "#0F172A" }}
               />
             </View>
 
-            {/* Bio */}
             <View>
               <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Bio (optional)</Text>
               <TextInput
@@ -452,20 +372,10 @@ export default function ProfileCompleteScreen() {
                 multiline
                 numberOfLines={4}
                 editable={!loading}
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#E2E8F0",
-                  borderRadius: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  fontSize: 14,
-                  color: "#0F172A",
-                  textAlignVertical: "top",
-                }}
+                style={{ borderWidth: 1, borderColor: "#E2E8F0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: "#0F172A", textAlignVertical: "top" }}
               />
             </View>
 
-            {/* Save button */}
             <Pressable
               onPress={handleMechanicComplete}
               disabled={loading}
@@ -478,11 +388,7 @@ export default function ProfileCompleteScreen() {
                 opacity: pressed ? 0.9 : 1,
               })}
             >
-              {loading ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700" }}>Complete Profile</Text>
-              )}
+              {loading ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700" }}>Complete Profile</Text>}
             </Pressable>
           </View>
         )}

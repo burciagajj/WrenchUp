@@ -16,7 +16,7 @@ import { localizedServiceName } from "@/lib/service-i18n";
 import { StripePaymentSheet } from "@/components/stripe-payment-sheet";
 import { usePaymentSheet } from "@/hooks/use-payment-sheet";
 import { amountToStripeAmount, getCurrencyForRegion } from "@/lib/stripe";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Platform, TextInput } from "react-native";
 
 export default function ConfirmScreen() {
@@ -29,11 +29,55 @@ export default function ConfirmScreen() {
   );
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [showPriceEdit, setShowPriceEdit] = useState(false);
+  const [claudeAnalysis, setClaudeAnalysis] = useState<string | null>(null);
+  const [claudeLoading, setClaudeLoading] = useState(false);
 
   const mechanic = typeof mechanicId === "string" ? getMechanic(mechanicId) : undefined;
   const serviceType = typeof service === "string" ? getServiceType(service) : undefined;
   const { t, locale, formatPrice, region } = useLocaleContext();
   const paymentSheet = usePaymentSheet();
+  useEffect(() => {
+    const analyze = async () => {
+      console.log("Claude analyzing...", vehicle, serviceType, fare.total);
+      if (!vehicle || !serviceType) {
+        console.log("Missing vehicle or serviceType!");
+        return;
+      }
+      setClaudeLoading(true);
+      try {
+        const response = await fetch("/api/claude", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-5",
+            max_tokens: 300,
+            messages: [{
+              role: "user",
+              content: `Vehicle: ${vehicle.year} ${vehicle.make} ${vehicle.model}. Service needed: ${serviceType.code}. Estimated price: $${fare.total}. In 2-3 short sentences, tell the customer if this price is fair and what to expect. Be friendly and simple.`
+            }]
+          })
+        });
+        const data = await response.json();
+        console.log("Full Claude response:", JSON.stringify(data));
+if (data.content && data.content[0] && data.content[0].text) {
+  setClaudeAnalysis(data.content[0].text);
+} else if (data.error) {
+  console.error("Claude API error:", data.error);
+} else {
+  console.log("Unexpected response:", data);
+}
+      } catch (err) {
+        console.error("Claude error:", err);
+      } finally {
+        setClaudeLoading(false);
+      }
+    };
+    analyze();
+  }, [vehicle?.id, serviceType?.code]);
 
   if (!mechanic || !serviceType) {
     return (
@@ -176,7 +220,17 @@ export default function ConfirmScreen() {
           <DetailRow icon="location.fill" label={t("confirm.location")} value={state.defaultLocation} />
           <Divider />
         </View>
-
+        {/* Claude AI Analysis */}
+<View style={[styles.card, { borderColor: "#F97316", backgroundColor: "#FFF7ED" }]}>
+  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+    <Text style={{ fontSize: 13, fontWeight: "800", color: "#F97316" }}>⚡ Powered by Claude AI</Text>
+  </View>
+  {claudeLoading ? (
+    <Text style={{ fontSize: 13, color: "#64748B" }}>Analyzing your service...</Text>
+  ) : (
+    <Text style={{ fontSize: 13, color: "#475569", lineHeight: 20 }}>{claudeAnalysis}</Text>
+  )}
+</View>
         {/* Price Edit Section */}
         <View style={styles.card}>
           <Pressable
