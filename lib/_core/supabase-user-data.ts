@@ -5,8 +5,11 @@
  */
 
 import type { Vehicle } from "../types";
-import { supabaseAuth } from "./supabase-auth";
-import { getRefreshToken, updateSessionToken } from "../auth-context";
+import {
+  ensureValidAccessToken,
+  isJwtExpiredError,
+  refreshAccessToken,
+} from "../profile-session";
 
 export type UserProfile = {
   id: string;
@@ -20,6 +23,43 @@ export type UserProfile = {
   created_at: string;
   updated_at: string;
 };
+
+/** Read profile — supports full_name/avatar_url (live DB) or legacy name/photo_url */
+function mapDbRowToProfile(row: Record<string, unknown>): UserProfile {
+  return {
+    id: String(row.id ?? ""),
+    userId: String(row.user_id ?? row.userId ?? ""),
+    email: (row.email as string) ?? null,
+    full_name: (row.full_name as string) ?? (row.name as string) ?? null,
+    bio: (row.bio as string) ?? null,
+    avatar_url: (row.avatar_url as string) ?? (row.photo_url as string) ?? null,
+    role: (row.role as UserProfile["role"]) ?? null,
+    completed_at: (row.completed_at as string) ?? null,
+    created_at: String(row.created_at ?? ""),
+    updated_at: String(row.updated_at ?? ""),
+  };
+}
+
+function mapAppUpdatesToDb(
+  updates: Partial<Omit<UserProfile, "id" | "userId" | "createdAt">>
+): Record<string, unknown> {
+  const db: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(updates)) {
+    const v = value === "" ? null : value;
+    // Live Supabase schema uses full_name + avatar_url (not name / photo_url)
+    if (
+      key === "full_name" ||
+      key === "avatar_url" ||
+      key === "bio" ||
+      key === "role" ||
+      key === "email" ||
+      key === "completed_at"
+    ) {
+      db[key] = v;
+    }
+  }
+  return db;
+}
 
 export type UserVehicle = {
   id: string;
@@ -55,13 +95,15 @@ class SupabaseUserDataClient {
     endpoint: string,
     method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
     body?: Record<string, unknown>,
-    sessionToken?: string
+    sessionToken?: string,
+    retriedAfterRefresh = false
   ): Promise<any> {
     const url = `${this.supabaseUrl}/rest/v1${endpoint}`;
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      apikey: this.supabaseKey,
-    };
+  "Content-Type": "application/json",
+  "Prefer": "return=representation",
+  apikey: this.supabaseKey,
+};
 
     // Add authorization header if session token provided
     if (sessionToken) {
@@ -80,19 +122,32 @@ class SupabaseUserDataClient {
       if (!response.ok) {
         const error = await response.json();
         console.error(`[SupabaseUserData] API Error: ${response.status}`, error);
-        
-        // Handle specific Supabase errors
-        if (error.code === 'PGRST205') {
-          throw {
-            code: 'TABLE_NOT_FOUND',
-            message: `Database table not found. Please run SUPABASE_SETUP.sql in Supabase SQL Editor to create required tables.`,
-          };
-        }
-        
-        throw {
+
+        const wrapped = {
           code: error.code || `http_${response.status}`,
           message: error.message || `HTTP ${response.status}`,
+          details: error,
         };
+
+        if (error.code === "PGRST205") {
+          throw {
+            code: "TABLE_NOT_FOUND",
+            message:
+              "Database table not found. Please run SUPABASE_SETUP.sql in Supabase SQL Editor to create required tables.",
+          };
+        }
+
+        if (sessionToken && !retriedAfterRefresh && isJwtExpiredError(wrapped)) {
+          console.log("[SupabaseUserData] JWT expired — refreshing and retrying...");
+          try {
+            const newToken = await refreshAccessToken();
+            return this.apiCall(endpoint, method, body, newToken, true);
+          } catch (refreshErr) {
+            console.error("[SupabaseUserData] Retry after refresh failed:", refreshErr);
+          }
+        }
+
+        throw wrapped;
       }
 
       // GET requests return array or single object
@@ -128,19 +183,20 @@ class SupabaseUserDataClient {
     sessionToken: string
   ): Promise<UserProfile> {
     try {
+      const currentToken = await ensureValidAccessToken(sessionToken);
+
       // Try to fetch existing profile
       const profiles = await this.apiCall(
         `/user_profiles?user_id=eq.${userId}`,
         "GET",
         undefined,
-        sessionToken
+        currentToken
       );
 
       if (profiles && profiles.length > 0) {
-        return profiles[0];
+        return mapDbRowToProfile(profiles[0]);
       }
 
-      // Create new profile if doesn't exist
       const newProfile = await this.apiCall(
         "/user_profiles",
         "POST",
@@ -149,11 +205,13 @@ class SupabaseUserDataClient {
           role,
           full_name: null,
           bio: null,
+          avatar_url: null,
         },
-        sessionToken
+        currentToken
       );
 
-      return newProfile[0] || { userId, role, full_name: null, bio: null };
+      const row = Array.isArray(newProfile) ? newProfile[0] : newProfile;
+      return row ? mapDbRowToProfile(row) : mapDbRowToProfile({ user_id: userId, role });
     } catch (error) {
       console.error("[SupabaseUserData] Failed to get/create profile:", error);
       throw error;
@@ -175,33 +233,13 @@ class SupabaseUserDataClient {
       if (!userId) throw new Error("userId is required");
       if (!sessionToken) throw new Error("sessionToken is required");
 
-      // Attempt to refresh session if it might be expired
-      let currentToken = sessionToken;
-      try {
-        const refreshToken = await getRefreshToken();
-        if (refreshToken) {
-          console.log("[SupabaseUserData] Refreshing session before updateProfile...");
-          const refreshResult = await supabaseAuth.refreshSession(refreshToken);
-          currentToken = refreshResult.access_token;
-          await updateSessionToken(currentToken, refreshResult.refresh_token);
-          console.log("[SupabaseUserData] Session refreshed successfully");
-        }
-      } catch (refreshErr) {
-        console.warn("[SupabaseUserData] Session refresh failed, continuing with existing token:", refreshErr);
-        // Continue with original token
-      }
-      
-      // Clean updates: convert empty strings to null
-      const cleanUpdates: Record<string, any> = {};
-      for (const [key, value] of Object.entries(updates)) {
-        cleanUpdates[key] = value === '' ? null : value;
-      }
-      
-      // ALWAYS include email from auth session
+      const currentToken = await ensureValidAccessToken(sessionToken);
+
+      const cleanUpdates = mapAppUpdatesToDb(updates);
       if (userEmail) {
         cleanUpdates.email = userEmail;
       }
-      
+
       console.log("[SupabaseUserData] Updating profile for user:", userId, "with updates:", cleanUpdates);
       
       // Try to update existing profile
@@ -215,7 +253,7 @@ class SupabaseUserDataClient {
       // If update returned rows, return the updated profile
       if (updateResult && updateResult.length > 0) {
         console.log("[SupabaseUserData] Profile updated successfully");
-        return updateResult[0];
+        return mapDbRowToProfile(updateResult[0]);
       }
       
       // If update returned no rows, profile doesn't exist - create it
@@ -233,11 +271,11 @@ class SupabaseUserDataClient {
       // Handle various response formats from Supabase
       if (createResult && createResult.length > 0) {
         console.log("[SupabaseUserData] Profile created successfully (array response)");
-        return createResult[0];
+        return mapDbRowToProfile(createResult[0]);
       }
-      if (createResult && typeof createResult === 'object' && !Array.isArray(createResult)) {
+      if (createResult && typeof createResult === "object" && !Array.isArray(createResult)) {
         console.log("[SupabaseUserData] Profile created successfully (object response)");
-        return createResult;
+        return mapDbRowToProfile(createResult as Record<string, unknown>);
       }
       
       // If we get here, something went wrong
@@ -254,11 +292,12 @@ class SupabaseUserDataClient {
    */
   async getUserVehicles(userId: string, sessionToken: string): Promise<UserVehicle[]> {
     try {
+      const currentToken = await ensureValidAccessToken(sessionToken);
       const vehicles = await this.apiCall(
         `/user_vehicles?user_id=eq.${userId}&order=created_at.desc`,
         "GET",
         undefined,
-        sessionToken
+        currentToken
       );
 
       return vehicles || [];
@@ -285,21 +324,7 @@ class SupabaseUserDataClient {
       if (!vehicle.model) throw new Error("Vehicle model is required");
       if (!vehicle.year) throw new Error("Vehicle year is required");
 
-      // Attempt to refresh session if it might be expired
-      let currentToken = sessionToken;
-      try {
-        const refreshToken = await getRefreshToken();
-        if (refreshToken) {
-          console.log("[SupabaseUserData] Refreshing session before addVehicle...");
-          const refreshResult = await supabaseAuth.refreshSession(refreshToken);
-          currentToken = refreshResult.access_token;
-          await updateSessionToken(currentToken, refreshResult.refresh_token);
-          console.log("[SupabaseUserData] Session refreshed successfully");
-        }
-      } catch (refreshErr) {
-        console.warn("[SupabaseUserData] Session refresh failed, continuing with existing token:", refreshErr);
-        // Continue with original token
-      }
+      const currentToken = await ensureValidAccessToken(sessionToken);
 
       // Build payload with EXACT column names matching Supabase user_vehicles table
       const payload = {
@@ -372,17 +397,18 @@ class SupabaseUserDataClient {
     sessionToken: string
   ): Promise<UserVehicle> {
     try {
+      const currentToken = await ensureValidAccessToken(sessionToken);
       const result = await this.apiCall(
         `/user_vehicles?id=eq.${vehicleId}&user_id=eq.${userId}`,
         "PATCH",
         updates,
-        sessionToken
+        currentToken
       );
 
       if (result && result.length > 0) {
         return result[0];
       }
-      if (result && typeof result === 'object' && !Array.isArray(result)) {
+      if (result && typeof result === "object" && !Array.isArray(result)) {
         return result;
       }
       throw new Error("Failed to update vehicle: invalid response");
@@ -397,11 +423,12 @@ class SupabaseUserDataClient {
    */
   async deleteVehicle(vehicleId: string, userId: string, sessionToken: string): Promise<void> {
     try {
+      const currentToken = await ensureValidAccessToken(sessionToken);
       await this.apiCall(
         `/user_vehicles?id=eq.${vehicleId}&user_id=eq.${userId}`,
         "DELETE",
         undefined,
-        sessionToken
+        currentToken
       );
     } catch (error) {
       console.error("[SupabaseUserData] Failed to delete vehicle:", error);
@@ -418,12 +445,13 @@ class SupabaseUserDataClient {
     sessionToken: string
   ): Promise<void> {
     try {
+      const currentToken = await ensureValidAccessToken(sessionToken);
       // Clear all active vehicles for this user
       await this.apiCall(
         `/user_vehicles?user_id=eq.${userId}`,
         "PATCH",
         { is_active: false },
-        sessionToken
+        currentToken
       );
 
       // Set the selected vehicle as active
@@ -431,7 +459,7 @@ class SupabaseUserDataClient {
         `/user_vehicles?id=eq.${vehicleId}&user_id=eq.${userId}`,
         "PATCH",
         { is_active: true },
-        sessionToken
+        currentToken
       );
     } catch (error) {
       console.error("[SupabaseUserData] Failed to set active vehicle:", error);
@@ -448,242 +476,24 @@ class SupabaseUserDataClient {
     sessionToken: string
   ): Promise<UserProfile> {
     try {
+      const currentToken = await ensureValidAccessToken(sessionToken);
+      const dbPatch = mapAppUpdatesToDb({ avatar_url });
       const result = await this.apiCall(
         `/user_profiles?user_id=eq.${userId}`,
         "PATCH",
-        { avatar_url: avatar_url },
-        sessionToken
+        dbPatch,
+        currentToken
       );
 
       if (result && result.length > 0) {
-        return result[0];
+        return mapDbRowToProfile(result[0]);
       }
-      if (result && typeof result === 'object' && !Array.isArray(result)) {
-        return result;
+      if (result && typeof result === "object" && !Array.isArray(result)) {
+        return mapDbRowToProfile(result as Record<string, unknown>);
       }
       throw new Error("Failed to update profile photo: invalid response");
     } catch (error) {
       console.error("[SupabaseUserData] Failed to update profile photo:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get user profile by ID
-   */
-  async getProfile(userId: string, sessionToken: string): Promise<UserProfile | null> {
-    try {
-      const profiles = await this.apiCall(
-        `/user_profiles?user_id=eq.${userId}`,
-        "GET",
-        undefined,
-        sessionToken
-      );
-
-      return profiles && profiles.length > 0 ? profiles[0] : null;
-    } catch (error) {
-      console.error("[SupabaseUserData] Failed to get profile:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Save mechanic pricing data to user profile
-   * Stores pricing as JSON in the user_profiles table
-   */
-  async savePricingData(
-    userId: string,
-    pricing: Record<string, number>,
-    sessionToken: string,
-    userEmail?: string
-  ): Promise<UserProfile> {
-    try {
-      if (!userId) throw new Error("userId is required");
-      if (!sessionToken) throw new Error("sessionToken is required");
-
-      // Attempt to refresh session if it might be expired
-      let currentToken = sessionToken;
-      try {
-        const refreshToken = await getRefreshToken();
-        if (refreshToken) {
-          console.log("[SupabaseUserData] Refreshing session before savePricingData...");
-          const refreshResult = await supabaseAuth.refreshSession(refreshToken);
-          currentToken = refreshResult.access_token;
-          await updateSessionToken(currentToken, refreshResult.refresh_token);
-          console.log("[SupabaseUserData] Session refreshed successfully");
-        }
-      } catch (refreshErr) {
-        console.warn("[SupabaseUserData] Session refresh failed, continuing with existing token:", refreshErr);
-      }
-
-      console.log("[SupabaseUserData] Saving pricing data for user:", userId, pricing);
-
-      // Try to update existing profile
-      const updateResult = await this.apiCall(
-        `/user_profiles?user_id=eq.${userId}`,
-        "PATCH",
-        {
-          pricing: pricing,
-          email: userEmail,
-        },
-        currentToken
-      );
-
-      // If update returned rows, return the updated profile
-      if (updateResult && updateResult.length > 0) {
-        console.log("[SupabaseUserData] Pricing saved successfully");
-        return updateResult[0];
-      }
-
-      // If update returned no rows, profile doesn't exist - create it
-      console.log("[SupabaseUserData] Profile doesn't exist, creating new one with pricing");
-      const createResult = await this.apiCall(
-        "/user_profiles",
-        "POST",
-        {
-          user_id: userId,
-          pricing: pricing,
-          email: userEmail,
-        },
-        currentToken
-      );
-
-      // Handle various response formats from Supabase
-      if (createResult && createResult.length > 0) {
-        console.log("[SupabaseUserData] Profile created with pricing (array response)");
-        return createResult[0];
-      }
-      if (createResult && typeof createResult === "object" && !Array.isArray(createResult)) {
-        console.log("[SupabaseUserData] Profile created with pricing (object response)");
-        return createResult;
-      }
-
-      throw new Error("Failed to save pricing data: invalid response from server");
-    } catch (error) {
-      console.error("[SupabaseUserData] Failed to save pricing data:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Create a new job request
-   */
-  async createJobRequest(
-    jobRequest: {
-      customer_id: string;
-      vehicle_id: string;
-      problem_description: string;
-      customer_email?: string;
-      mechanic_id?: string;
-      mechanic_offered_price?: number;
-      customer_counter_offer?: number;
-      final_price?: number;
-    },
-    sessionToken: string
-  ): Promise<any> {
-    try {
-      if (!jobRequest.customer_id) throw new Error("customer_id is required");
-      if (!jobRequest.vehicle_id) throw new Error("vehicle_id is required");
-      if (!jobRequest.problem_description) throw new Error("problem_description is required");
-      if (!sessionToken) throw new Error("sessionToken is required");
-
-      // Attempt to refresh session if it might be expired
-      let currentToken = sessionToken;
-      try {
-        const refreshToken = await getRefreshToken();
-        if (refreshToken) {
-          console.log("[SupabaseUserData] Refreshing session before createJobRequest...");
-          const refreshResult = await supabaseAuth.refreshSession(refreshToken);
-          currentToken = refreshResult.access_token;
-          await updateSessionToken(currentToken, refreshResult.refresh_token);
-          console.log("[SupabaseUserData] Session refreshed successfully");
-        }
-      } catch (refreshErr) {
-        console.warn("[SupabaseUserData] Session refresh failed, continuing with existing token:", refreshErr);
-      }
-
-      console.log("[SupabaseUserData] Creating job request:", jobRequest);
-
-      const result = await this.apiCall(
-        "/job_requests",
-        "POST",
-        {
-          ...jobRequest,
-          status: "pending",
-        },
-        currentToken
-      );
-
-      if (result && (Array.isArray(result) ? result.length > 0 : result)) {
-        console.log("[SupabaseUserData] Job request created successfully");
-        return Array.isArray(result) ? result[0] : result;
-      }
-
-      throw new Error("Failed to create job request: invalid response");
-    } catch (error) {
-      console.error("[SupabaseUserData] Failed to create job request:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get job requests for customer
-   */
-  async getCustomerJobRequests(userId: string, sessionToken: string): Promise<any[]> {
-    try {
-      const requests = await this.apiCall(
-        `/job_requests?customer_id=eq.${userId}&order=created_at.desc`,
-        "GET",
-        undefined,
-        sessionToken
-      );
-
-      return requests || [];
-    } catch (error) {
-      console.error("[SupabaseUserData] Failed to fetch customer job requests:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Update job request
-   */
-  async updateJobRequest(
-    jobRequestId: string,
-    updates: Record<string, any>,
-    sessionToken: string
-  ): Promise<any> {
-    try {
-      if (!jobRequestId) throw new Error("jobRequestId is required");
-      if (!sessionToken) throw new Error("sessionToken is required");
-
-      // Attempt to refresh session if it might be expired
-      let currentToken = sessionToken;
-      try {
-        const refreshToken = await getRefreshToken();
-        if (refreshToken) {
-          const refreshResult = await supabaseAuth.refreshSession(refreshToken);
-          currentToken = refreshResult.access_token;
-          await updateSessionToken(currentToken, refreshResult.refresh_token);
-        }
-      } catch (refreshErr) {
-        console.warn("[SupabaseUserData] Session refresh failed, continuing with existing token:", refreshErr);
-      }
-
-      const result = await this.apiCall(
-        `/job_requests?id=eq.${jobRequestId}`,
-        "PATCH",
-        updates,
-        currentToken
-      );
-
-      if (result && (Array.isArray(result) ? result.length > 0 : result)) {
-        return Array.isArray(result) ? result[0] : result;
-      }
-
-      throw new Error("Failed to update job request: invalid response");
-    } catch (error) {
-      console.error("[SupabaseUserData] Failed to update job request:", error);
       throw error;
     }
   }
@@ -696,13 +506,14 @@ class SupabaseUserDataClient {
     sessionToken: string
   ): Promise<void> {
     try {
+      const currentToken = await ensureValidAccessToken(sessionToken);
       const url = `${this.supabaseUrl}/auth/v1/user`;
       const response = await fetch(url, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           apikey: this.supabaseKey,
-          Authorization: `Bearer ${sessionToken}`,
+          Authorization: `Bearer ${currentToken}`,
         },
         body: JSON.stringify({ password: newPassword }),
       });

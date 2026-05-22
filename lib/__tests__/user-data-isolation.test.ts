@@ -34,6 +34,21 @@ describe("User Data Isolation (v1.6)", () => {
       expect(state.userName).toBe("John Doe");
       expect(state.vehicles).toEqual(vehicles);
       expect(state.selectedVehicleId).toBe("v1");
+      expect(state.photoUrl).toBeNull();
+    });
+
+    it("should load avatar URL from profile", () => {
+      const state = reducer(initialState, {
+        type: "LOAD_USER_DATA",
+        payload: {
+          userName: "Jane",
+          vehicles: [],
+          selectedVehicleId: null,
+          photoUrl: "https://example.com/avatar.jpg",
+        },
+      });
+
+      expect(state.photoUrl).toBe("https://example.com/avatar.jpg");
     });
 
     it("should handle multiple vehicles", () => {

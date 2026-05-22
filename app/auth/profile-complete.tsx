@@ -1,46 +1,58 @@
 /**
- * Profile Completion Screen (v1.6)
- * Post-signup profile setup for customers and mechanics
- * Now skips for customers who already have vehicles
+ * Profile Completion Screen (v1.6+)
+ * Post-signup onboarding: full name, profile photo, vehicle (customers) or bio (mechanics).
+ * Uses session refresh + loadUserData (same pattern as vehicle persistence).
  */
 
 import { useState, useEffect } from "react";
-import { View, Text, TextInput, Pressable, ScrollView, ActivityIndicator, Platform } from "react-native";
-import { router } from "expo-router";
-import * as SecureStore from "expo-secure-store";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { View, Text, TextInput, Pressable, ScrollView, ActivityIndicator } from "react-native";
+import { router, Redirect } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
+import { Avatar } from "@/components/avatar";
 import { useStore } from "@/lib/store";
 import { useAuth, useLoadUserData } from "@/lib/auth-context";
 import { supabaseUserData } from "@/lib/_core/supabase-user-data";
-import { supabaseAuth } from "@/lib/_core/supabase-auth";
-import { getRefreshToken, updateSessionToken } from "@/lib/auth-context";
+import { getSessionToken } from "@/lib/auth-context";
+import { resolveAuthSession } from "@/lib/resolve-auth-session";
+import { saveProfileAvatar } from "@/lib/profile-avatar";
+import { useImagePicker, type PickedImage } from "@/hooks/use-image-picker";
+import { userHasVehicles } from "@/lib/vehicles";
 import * as Haptics from "expo-haptics";
 
-import { userHasVehicles } from "@/lib/vehicles";   // ← Added for vehicle check
-
 export default function ProfileCompleteScreen() {
-  const { state, dispatch } = useStore();
+  const { state } = useStore();
   const { user, isLoading: isAuthLoading } = useAuth();
   const loadUserData = useLoadUserData();
+  const { pickProfileImage } = useImagePicker();
   const isCustomer = state.role === "customer";
 
-  // Customer: Vehicle form state
+  // Shared profile fields (both roles)
+  const [fullName, setFullName] = useState(state.userName || "");
+  const [pendingAvatar, setPendingAvatar] = useState<PickedImage | null>(null);
+  const [avatarPreviewUri, setAvatarPreviewUri] = useState<string | null>(state.photoUrl || null);
+  const [pickingPhoto, setPickingPhoto] = useState(false);
+
+  // Customer: vehicle form
   const [vehicleNickname, setVehicleNickname] = useState("");
   const [vehicleYear, setVehicleYear] = useState("");
   const [vehicleMake, setVehicleMake] = useState("");
   const [vehicleModel, setVehicleModel] = useState("");
   const [vehicleColor, setVehicleColor] = useState("");
 
-  // Mechanic: Basic info state
-  const [mechanicName, setMechanicName] = useState(state.userName || "");
+  // Mechanic: optional bio
   const [mechanicBio, setMechanicBio] = useState("");
 
-  // Common state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Skip screen if customer already has vehicles
+  // Require a real session — do not allow onboarding without signing in
+  useEffect(() => {
+    if (!isAuthLoading && !user) {
+      router.replace("/auth/signin");
+    }
+  }, [isAuthLoading, user]);
+
+  // Skip vehicle form if customer already has vehicles — still sync profile from Supabase
   useEffect(() => {
     const checkExistingVehicles = async () => {
       if (!user?.id || !isCustomer) return;
@@ -48,33 +60,76 @@ export default function ProfileCompleteScreen() {
       try {
         const hasVehicles = await userHasVehicles(user.id);
         if (hasVehicles) {
-          console.log("✅ User already has vehicles → skipping Add Vehicle screen");
+          console.log("[ProfileComplete] Has vehicles → syncing profile and skipping");
+          const token = await getSessionToken();
+          if (token) await loadUserData(token, user);
           router.replace("/(tabs)");
         }
       } catch (err) {
-        console.error("Error checking vehicles:", err);
-        // Continue to show the screen as fallback
+        console.error("[ProfileComplete] Error checking vehicles:", err);
       }
     };
 
     checkExistingVehicles();
-  }, [user?.id, isCustomer]);
+  }, [user?.id, isCustomer, loadUserData, user]);
 
-  const getSessionToken = async (): Promise<string | null> => {
+  const handlePickPhoto = async () => {
+    if (loading || pickingPhoto) return;
+    setPickingPhoto(true);
+    setError(null);
     try {
-      if (Platform.OS === "web") {
-        return await AsyncStorage.getItem("wrenchup_session_token");
-      } else {
-        return await SecureStore.getItemAsync("wrenchup_session_token");
+      const image = await pickProfileImage();
+      if (image) {
+        setPendingAvatar(image);
+        setAvatarPreviewUri(image.uri);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        console.log("[ProfileComplete] Photo selected (uploads on save)");
       }
     } catch (err) {
-      console.error("[ProfileComplete] Failed to get session token:", err);
-      return null;
+      console.error("[ProfileComplete] Photo pick failed:", err);
+      setError("Could not select photo.");
+    } finally {
+      setPickingPhoto(false);
     }
   };
 
-  const validateCustomerForm = (): boolean => {
+  const resolveSessionAndUserId = async () => {
+    const resolved = await resolveAuthSession(user, (err) => {
+      setError(err.message);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    });
+    return resolved;
+  };
+
+  const saveProfileFields = async (
+    userId: string,
+    sessionToken: string,
+    extra?: { bio?: string }
+  ) => {
+    await supabaseUserData.updateProfile(
+      userId,
+      { full_name: fullName.trim(), email: user?.email, ...extra },
+      sessionToken,
+      user?.email
+    );
+    if (pendingAvatar) {
+      const publicUrl = await saveProfileAvatar(userId, pendingAvatar, sessionToken);
+      setAvatarPreviewUri(publicUrl);
+      setPendingAvatar(null);
+    }
+  };
+
+  const validateProfileFields = (): boolean => {
     setError(null);
+    if (!fullName.trim()) {
+      setError("Full name is required");
+      return false;
+    }
+    return true;
+  };
+
+  const validateCustomerForm = (): boolean => {
+    if (!validateProfileFields()) return false;
 
     if (!vehicleNickname.trim()) {
       setError("Vehicle nickname is required");
@@ -102,20 +157,17 @@ export default function ProfileCompleteScreen() {
     return true;
   };
 
-  const validateMechanicForm = (): boolean => {
-    setError(null);
-
-    if (!mechanicName.trim()) {
-      setError("Name is required");
-      return false;
-    }
-
-    return true;
+  const finishOnboarding = async (sessionToken: string) => {
+    if (user) await loadUserData(sessionToken, user);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    router.replace("/(tabs)");
   };
 
   const handleSaveCustomer = async () => {
-    if (!validateCustomerForm()) return;
-
+    if (!validateCustomerForm()) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      return;
+    }
     if (isAuthLoading) {
       setError("Loading authentication...");
       return;
@@ -123,47 +175,21 @@ export default function ProfileCompleteScreen() {
 
     setLoading(true);
     setError(null);
-
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-      let sessionToken = await getSessionToken();
-      if (!sessionToken) {
-        setError("Session expired. Please log in again.");
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      const resolved = await resolveSessionAndUserId();
+      if (!resolved) {
         setLoading(false);
         return;
       }
+      const { sessionToken, userId } = resolved;
 
-      // Refresh session if possible
-      try {
-        const refreshToken = await getRefreshToken();
-        if (refreshToken) {
-          const refreshResult = await supabaseAuth.refreshSession(refreshToken);
-          sessionToken = refreshResult.access_token;
-          await updateSessionToken(sessionToken, refreshResult.refresh_token);
-        }
-      } catch (refreshErr) {
-        console.warn("[ProfileComplete] Session refresh failed, continuing...", refreshErr);
-      }
-
-      let userId = user?.id;
-      if (!userId) {
-        const currentUser = await supabaseAuth.getCurrentUser(sessionToken);
-        userId = currentUser?.id;
-      }
-
-      if (!userId) {
-        setError("Failed to get user information.");
-        setLoading(false);
-        return;
-      }
-
+      await saveProfileFields(userId, sessionToken);
       await supabaseUserData.addVehicle(
         userId,
         {
           nickname: vehicleNickname,
-          year: parseInt(vehicleYear),
+          year: parseInt(vehicleYear, 10),
           make: vehicleMake,
           model: vehicleModel,
           color: vehicleColor,
@@ -172,13 +198,10 @@ export default function ProfileCompleteScreen() {
         sessionToken
       );
 
-      await loadUserData(sessionToken);
-
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace("/(tabs)");
+      await finishOnboarding(sessionToken);
     } catch (err) {
-      console.error("[ProfileComplete] Error:", err);
-      setError("Failed to save vehicle. Please try again.");
+      console.error("[ProfileComplete] Customer save error:", err);
+      setError("Failed to save profile. Please try again.");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
@@ -186,11 +209,10 @@ export default function ProfileCompleteScreen() {
   };
 
   const handleMechanicComplete = async () => {
-    if (!validateMechanicForm()) {
+    if (!validateProfileFields()) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       return;
     }
-
     if (isAuthLoading || !user?.id) {
       setError("Not authenticated. Please sign up again.");
       return;
@@ -198,45 +220,19 @@ export default function ProfileCompleteScreen() {
 
     setLoading(true);
     setError(null);
-
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-      let sessionToken = await getSessionToken();
-      if (!sessionToken) {
-        setError("Session expired. Please log in again.");
+      const resolved = await resolveSessionAndUserId();
+      if (!resolved) {
         setLoading(false);
         return;
       }
+      const { sessionToken, userId } = resolved;
 
-      // Refresh session logic...
-      try {
-        const refreshToken = await getRefreshToken();
-        if (refreshToken) {
-          const refreshResult = await supabaseAuth.refreshSession(refreshToken);
-          sessionToken = refreshResult.access_token;
-          await updateSessionToken(sessionToken, refreshResult.refresh_token);
-        }
-      } catch (refreshErr) {
-        console.warn("[ProfileComplete] Session refresh failed...", refreshErr);
-      }
-
-      await supabaseUserData.updateProfile(
-        user.id,
-        {
-          full_name: mechanicName,
-          bio: mechanicBio,
-          email: user.email,
-        },
-        sessionToken
-      );
-
-      await loadUserData(sessionToken);
-
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace("/(tabs)");
+      await saveProfileFields(userId, sessionToken, { bio: mechanicBio });
+      await finishOnboarding(sessionToken);
     } catch (err) {
-      console.error("[ProfileComplete] Error:", err);
+      console.error("[ProfileComplete] Mechanic save error:", err);
       setError("Failed to save profile. Please try again.");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
@@ -252,17 +248,21 @@ export default function ProfileCompleteScreen() {
     );
   }
 
+  if (!user) {
+    return <Redirect href="/auth/signin" />;
+  }
+
   return (
     <ScreenContainer>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
         <View style={{ paddingHorizontal: 20, paddingTop: 20 }}>
           <Text style={{ fontSize: 28, fontWeight: "800", color: "#0F172A", marginBottom: 8 }}>
-            {isCustomer ? "Add Your Vehicle" : "Complete Your Profile"}
+            {isCustomer ? "Set Up Your Profile" : "Complete Your Profile"}
           </Text>
           <Text style={{ fontSize: 14, color: "#64748B", lineHeight: 20 }}>
             {isCustomer
-              ? "Tell us about your vehicle so mechanics can help you better"
-              : "Set up your mechanic profile to start accepting jobs"}
+              ? "Add your name, photo, and vehicle"
+              : "Add your name and photo to start accepting jobs"}
           </Text>
         </View>
 
@@ -274,9 +274,58 @@ export default function ProfileCompleteScreen() {
           </View>
         )}
 
+        {/* Avatar + full name (both roles) */}
+        <View style={{ paddingHorizontal: 20, marginTop: 24, alignItems: "center" }}>
+          <Pressable onPress={handlePickPhoto} disabled={loading || pickingPhoto}>
+            <View style={{ position: "relative" }}>
+              <Avatar name={fullName || "User"} url={avatarPreviewUri ?? undefined} size={100} />
+              {(pickingPhoto || loading) && (
+                <View
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: "rgba(0,0,0,0.35)",
+                    borderRadius: 50,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <ActivityIndicator color="#fff" />
+                </View>
+              )}
+            </View>
+          </Pressable>
+          <Text style={{ fontSize: 12, color: "#64748B", marginTop: 8 }}>Tap — camera or gallery</Text>
+          {pendingAvatar ? (
+            <Text style={{ fontSize: 12, color: "#F97316", marginTop: 4 }}>Photo uploads when you save</Text>
+          ) : null}
+        </View>
+
+        <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
+          <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Full Name</Text>
+          <TextInput
+            placeholder="Your full name"
+            value={fullName}
+            onChangeText={setFullName}
+            editable={!loading}
+            style={{
+              borderWidth: 1,
+              borderColor: "#E2E8F0",
+              borderRadius: 8,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              fontSize: 14,
+              color: "#0F172A",
+            }}
+          />
+        </View>
+
         {isCustomer ? (
           <View style={{ paddingHorizontal: 20, marginTop: 24, gap: 16 }}>
-            {/* Vehicle Form Fields - unchanged */}
+            <Text style={{ fontSize: 16, fontWeight: "700", color: "#0F172A" }}>Your Vehicle</Text>
             <View>
               <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Nickname</Text>
               <TextInput
@@ -346,23 +395,11 @@ export default function ProfileCompleteScreen() {
                 opacity: pressed ? 0.9 : 1,
               })}
             >
-              {loading ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700" }}>Save Vehicle</Text>}
+              {loading ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700" }}>Save & Continue</Text>}
             </Pressable>
           </View>
         ) : (
-          /* Mechanic form - unchanged */
           <View style={{ paddingHorizontal: 20, marginTop: 24, gap: 16 }}>
-            <View>
-              <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Full Name</Text>
-              <TextInput
-                placeholder="Your name"
-                value={mechanicName}
-                onChangeText={setMechanicName}
-                editable={!loading}
-                style={{ borderWidth: 1, borderColor: "#E2E8F0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: "#0F172A" }}
-              />
-            </View>
-
             <View>
               <Text style={{ fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 6 }}>Bio (optional)</Text>
               <TextInput

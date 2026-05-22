@@ -1,22 +1,28 @@
 /**
- * Sign-in Screen (v1.5)
- * Email/password login with forgot password flow
+ * Sign-in Screen (v1.6)
+ * Email/password login with forgot password flow — localized (en / es-MX)
+ * Fix: Moved all useState hooks above early return to comply with React rules of hooks
  */
 
 import { useState } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, ActivityIndicator } from "react-native";
-import { router } from "expo-router";
+import { Redirect } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth, useLoadUserData, useClearUserData, getSessionToken } from "@/lib/auth-context";
+import { safeReplace, safePush } from "@/lib/safe-router";
 import { supabaseAuth } from "@/lib/_core/supabase-auth";
-import { useStore } from "@/lib/store";
+import { useT } from "@/hooks/use-locale";
+import { useRegionBootstrap } from "@/hooks/use-region-bootstrap";
 import * as Haptics from "expo-haptics";
 
 export default function SignInScreen() {
-  const { dispatch } = useStore();
-  const { signIn: authSignIn, user } = useAuth();
+  // ─── All hooks must come first — no early returns before this block ───
+  const { signIn: authSignIn, isAuthenticated, isLoading: authLoading } = useAuth();
+  const loadUserData = useLoadUserData();
+  const clearUserData = useClearUserData();
+  const t = useT();
+  useRegionBootstrap({ eager: true });
 
-  // Form state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -26,26 +32,28 @@ export default function SignInScreen() {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotSuccess, setForgotSuccess] = useState(false);
+  // ─────────────────────────────────────────────────────────────────────
+
+  // Safe to early return after all hooks have been called
+  if (!authLoading && isAuthenticated) {
+    return <Redirect href="/(tabs)" />;
+  }
 
   const validateForm = (): boolean => {
     setError(null);
-
     if (!email.trim()) {
-      setError("Email is required");
+      setError(t("auth.signin.error_email_required"));
       return false;
     }
-
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      setError("Please enter a valid email address");
+      setError(t("auth.signin.error_email_invalid"));
       return false;
     }
-
     if (!password) {
-      setError("Password is required");
+      setError(t("auth.signin.error_password_required"));
       return false;
     }
-
     return true;
   };
 
@@ -61,33 +69,32 @@ export default function SignInScreen() {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      // Use auth context to sign in (this handles session persistence)
-      await authSignIn(email, password);
+      const authUser = await authSignIn(email, password);
+
+      clearUserData();
+      const sessionToken = await getSessionToken();
+      if (sessionToken) {
+        await loadUserData(sessionToken, authUser);
+      }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // Auth context will have user set, navigate based on profile completion
-      // Note: user state updates async, so we'll check after a short delay
-      setTimeout(() => {
-        if (user?.profileCompleted) {
-          router.replace("/(tabs)");
-        } else {
-          router.replace("/auth/profile-complete");
-        }
-      }, 100);
+      if (authUser.profileCompleted) {
+        safeReplace("/(tabs)");
+      } else {
+        safeReplace("/auth/profile-complete");
+      }
     } catch (err: any) {
       console.error("[SignIn] Error:", err);
 
-      // User-friendly error messages
-      let message = "Sign-in failed. Please try again.";
       const errorCode = err?.code || "";
-      const errorMsg = err?.message || "";
+      let message = t("auth.signin.error_failed");
       if (errorCode === "signin_failed" || errorCode === "invalid_credentials") {
-        message = "Invalid email or password. Please try again.";
+        message = t("auth.signin.error_invalid_credentials");
       } else if (errorCode === "user_not_found") {
-        message = "No account found with this email. Please sign up first.";
-      } else if (errorMsg) {
-        message = errorMsg;
+        message = t("auth.signin.error_user_not_found");
+      } else if (err?.message) {
+        message = err.message;
       }
 
       setError(message);
@@ -99,13 +106,12 @@ export default function SignInScreen() {
 
   const handleForgotPassword = async () => {
     if (!forgotEmail.trim()) {
-      setError("Please enter your email address");
+      setError(t("auth.forgot.error_email_required"));
       return;
     }
-
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(forgotEmail)) {
-      setError("Please enter a valid email address");
+      setError(t("auth.forgot.error_email_invalid"));
       return;
     }
 
@@ -119,45 +125,38 @@ export default function SignInScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
       console.error("[ForgotPassword] Error:", err);
-      setError("Failed to send reset email. Please try again.");
+      setError(t("auth.forgot.error_failed"));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setForgotLoading(false);
     }
   };
 
-  // Forgot Password Modal
   if (showForgotPassword) {
     return (
       <ScreenContainer className="bg-background">
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="px-6 py-8">
-          {/* Header */}
           <View className="mb-8">
-            <Text className="text-3xl font-bold text-foreground mb-2">Reset Password</Text>
-            <Text className="text-base text-muted">Enter your email to receive a password reset link</Text>
+            <Text className="text-3xl font-bold text-foreground mb-2">{t("auth.forgot.title")}</Text>
+            <Text className="text-base text-muted">{t("auth.forgot.subtitle")}</Text>
           </View>
 
-          {/* Success Message */}
           {forgotSuccess && (
             <View className="mb-6 p-4 bg-success/10 rounded-lg border border-success">
-              <Text className="text-success font-medium">
-                Check your email for a password reset link. It may take a few minutes to arrive.
-              </Text>
+              <Text className="text-success font-medium">{t("auth.forgot.success")}</Text>
             </View>
           )}
 
-          {/* Error Message */}
           {error && !forgotSuccess && (
             <View className="mb-6 p-4 bg-error/10 rounded-lg border border-error">
               <Text className="text-error font-medium">{error}</Text>
             </View>
           )}
 
-          {/* Email Input */}
           {!forgotSuccess && (
             <>
               <View className="mb-8">
-                <Text className="text-sm font-semibold text-foreground mb-2">Email</Text>
+                <Text className="text-sm font-semibold text-foreground mb-2">{t("auth.forgot.email")}</Text>
                 <TextInput
                   value={forgotEmail}
                   onChangeText={setForgotEmail}
@@ -170,7 +169,6 @@ export default function SignInScreen() {
                 />
               </View>
 
-              {/* Send Button */}
               <Pressable
                 onPress={handleForgotPassword}
                 disabled={forgotLoading}
@@ -181,41 +179,36 @@ export default function SignInScreen() {
                 {forgotLoading ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text className="text-white font-bold text-lg">Send Reset Link</Text>
+                  <Text className="text-white font-bold text-lg">{t("auth.forgot.cta")}</Text>
                 )}
               </Pressable>
             </>
           )}
 
-          {/* Back Button */}
           <Pressable onPress={() => setShowForgotPassword(false)} className="mt-6">
-            <Text className="text-center text-primary font-semibold">Back to Sign In</Text>
+            <Text className="text-center text-primary font-semibold">{t("auth.forgot.back")}</Text>
           </Pressable>
         </ScrollView>
       </ScreenContainer>
     );
   }
 
-  // Sign In Form
   return (
     <ScreenContainer className="bg-background">
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="px-6 py-8">
-        {/* Header */}
         <View className="mb-8">
-          <Text className="text-4xl font-bold text-foreground mb-2">Welcome Back</Text>
-          <Text className="text-base text-muted">Sign in to your WrenchUp account</Text>
+          <Text className="text-4xl font-bold text-foreground mb-2">{t("auth.signin.title")}</Text>
+          <Text className="text-base text-muted">{t("auth.signin.subtitle")}</Text>
         </View>
 
-        {/* Error Message */}
         {error && (
           <View className="mb-6 p-4 bg-error/10 rounded-lg border border-error">
             <Text className="text-error font-medium">{error}</Text>
           </View>
         )}
 
-        {/* Email Input */}
         <View className="mb-5">
-          <Text className="text-sm font-semibold text-foreground mb-2">Email</Text>
+          <Text className="text-sm font-semibold text-foreground mb-2">{t("auth.signin.email")}</Text>
           <TextInput
             value={email}
             onChangeText={setEmail}
@@ -228,36 +221,30 @@ export default function SignInScreen() {
           />
         </View>
 
-        {/* Password Input */}
         <View className="mb-3">
-          <Text className="text-sm font-semibold text-foreground mb-2">Password</Text>
+          <Text className="text-sm font-semibold text-foreground mb-2">{t("auth.signin.password")}</Text>
           <View className="flex-row items-center">
             <TextInput
               value={password}
               onChangeText={setPassword}
-              placeholder="Enter your password"
+              placeholder={t("auth.signin.password_placeholder")}
               placeholderTextColor="#999"
               secureTextEntry={!showPassword}
               editable={!loading}
               className="flex-1 px-4 py-3 bg-surface border border-border rounded-lg text-foreground"
             />
-            <Pressable
-              onPress={() => setShowPassword(!showPassword)}
-              className="absolute right-4"
-            >
+            <Pressable onPress={() => setShowPassword(!showPassword)} className="absolute right-4">
               <Text className="text-primary text-sm font-semibold">
-                {showPassword ? "Hide" : "Show"}
+                {showPassword ? t("auth.signin.hide") : t("auth.signin.show")}
               </Text>
             </Pressable>
           </View>
         </View>
 
-        {/* Forgot Password Link */}
         <Pressable onPress={() => setShowForgotPassword(true)} className="mb-8">
-          <Text className="text-right text-primary font-semibold text-sm">Forgot password?</Text>
+          <Text className="text-right text-primary font-semibold text-sm">{t("auth.signin.forgot")}</Text>
         </Pressable>
 
-        {/* Sign In Button */}
         <Pressable
           onPress={handleSignIn}
           disabled={loading}
@@ -268,15 +255,14 @@ export default function SignInScreen() {
           {loading ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
-            <Text className="text-white font-bold text-lg">Sign In</Text>
+            <Text className="text-white font-bold text-lg">{t("auth.signin.cta")}</Text>
           )}
         </Pressable>
 
-        {/* Sign Up Link */}
         <View className="mt-6 flex-row justify-center gap-2">
-          <Text className="text-muted">Don't have an account?</Text>
-          <Pressable onPress={() => router.push("/auth/signup")}>
-            <Text className="text-primary font-semibold">Sign Up</Text>
+          <Text className="text-muted">{t("auth.signin.no_account")}</Text>
+          <Pressable onPress={() => safePush("/auth/signup")}>
+            <Text className="text-primary font-semibold">{t("auth.signin.sign_up")}</Text>
           </Pressable>
         </View>
       </ScrollView>

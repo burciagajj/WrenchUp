@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useCallback } from "react";
 import { initialState, reducer, type Action } from "./store-reducer";
+import { getDeviceRegionHint } from "./region-detection";
 import type { AppState } from "./types";
 
 const STORAGE_KEY = "wrenchup_state_v1";
@@ -53,9 +54,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         if (raw) {
           const parsed = JSON.parse(raw) as Partial<AppState>;
+          // If no saved country and preference is auto, use device locale before first paint
+          if (
+            (parsed.regionPreference === "auto" || parsed.regionPreference === undefined) &&
+            !parsed.detectedCountry
+          ) {
+            const hint = getDeviceRegionHint();
+            if (hint) parsed.detectedCountry = hint;
+          }
           dispatch({ type: "HYDRATE", payload: parsed });
         } else {
-          dispatch({ type: "HYDRATE", payload: {} });
+          const hint = getDeviceRegionHint();
+          dispatch({
+            type: "HYDRATE",
+            payload: hint ? { detectedCountry: hint } : {},
+          });
         }
       } catch {
         dispatch({ type: "HYDRATE", payload: {} });

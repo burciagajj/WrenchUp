@@ -8,10 +8,12 @@ import {
   Role,
   Vehicle,
 } from "./types";
+import { getDeviceRegionHint } from "./region-detection";
 import { DEFAULT_LOCATION, DEFAULT_USER_NAME, DEFAULT_VEHICLES } from "./seed";
 
 export const initialState: AppState = {
   hydrated: false,
+  userDataStatus: "idle",
   userName: DEFAULT_USER_NAME,
   defaultLocation: DEFAULT_LOCATION,
   userCoords: null,
@@ -25,7 +27,7 @@ export const initialState: AppState = {
   mechanicOnline: false,
   mechanicJobs: [],
   mechanicActiveJobId: null,
-  detectedCountry: null,
+  detectedCountry: getDeviceRegionHint(),
   regionPreference: "auto",
   paymentMethods: [],
   defaultPaymentMethodId: null,
@@ -58,10 +60,19 @@ export type Action =
   | { type: "SET_DEFAULT_PAYMENT_METHOD"; payload: string | null }
   | { type: "SET_PAYMENT_STATUS"; payload: { status: AppState["paymentStatus"]; error?: string } }
   // v1.6: User data isolation
-  | { type: "LOAD_USER_DATA"; payload: { userName: string; vehicles: Vehicle[]; selectedVehicleId: string | null } }
+  | {
+      type: "LOAD_USER_DATA";
+      payload: {
+        userName: string;
+        vehicles: Vehicle[];
+        selectedVehicleId: string | null;
+        photoUrl?: string | null;
+      };
+    }
   | { type: "CLEAR_USER_DATA" }
   // v1.8: Photo upload
-  | { type: "SET_PHOTO_URL"; payload: string };
+  | { type: "SET_PHOTO_URL"; payload: string }
+  | { type: "SET_USER_DATA_STATUS"; payload: AppState["userDataStatus"] };
 
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -193,16 +204,26 @@ export function reducer(state: AppState, action: Action): AppState {
       };
 
     // v1.6: User data isolation
+    // Replace profile + vehicles + avatar from Supabase (after login, restore, or profile-complete)
+    case "SET_USER_DATA_STATUS":
+      return { ...state, userDataStatus: action.payload };
     case "LOAD_USER_DATA":
       return {
         ...state,
+        userDataStatus: "ready",
         userName: action.payload.userName,
         vehicles: action.payload.vehicles,
         selectedVehicleId: action.payload.selectedVehicleId,
+        // Explicit null clears avatar when profile has no avatar_url
+        photoUrl:
+          action.payload.photoUrl !== undefined
+            ? action.payload.photoUrl
+            : state.photoUrl,
       };
     case "CLEAR_USER_DATA":
       return {
         ...state,
+        userDataStatus: "idle",
         userName: DEFAULT_USER_NAME,
         vehicles: [],
         selectedVehicleId: null,

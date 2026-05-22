@@ -51,6 +51,8 @@ const NATIVE_SF_SYMBOLS = new Set<string>([
   "doc.text.fill",
   "snowflake",
   "fuelpump.fill",
+  "sparkles",
+  "line.3.horizontal",
 ]);
 
 const FALLBACK_MAPPING: Record<string, ComponentProps<typeof MaterialIcons>["name"]> = {

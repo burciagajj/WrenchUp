@@ -5,6 +5,8 @@ import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
+import { registerProfilePhotoRoutes } from "./profilePhoto";
+import { registerSymptomDiagnoseRoutes } from "./symptomDiagnose";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 
@@ -56,6 +58,8 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   registerStorageProxy(app);
+  registerProfilePhotoRoutes(app);
+  registerSymptomDiagnoseRoutes(app);
   registerOAuthRoutes(app);
 
   app.get("/api/health", (_req, res) => {

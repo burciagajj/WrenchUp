@@ -59,6 +59,8 @@ const MAPPING = {
   "snowflake": "ac-unit",
   "car.side.fill": "directions-car",
   "fuelpump.fill": "local-gas-station",
+  sparkles: "auto-awesome",
+  "line.3.horizontal": "menu",
 } as IconMapping;
 
 /**

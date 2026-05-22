@@ -134,16 +134,38 @@ class SupabaseAuthClient {
         emailConfirmed,
       });
 
+      // Session may be nested, at top level, or missing when email confirmation is on
+      let accessToken =
+        response.session?.access_token || response.access_token || "";
+      let refreshToken =
+        response.session?.refresh_token || response.refresh_token;
+
+      const authUser: AuthUser = {
+        id: response.user.id,
+        email: response.user.email,
+        role,
+        profileCompleted: false,
+        emailConfirmed,
+      };
+
+      // No session after signup → sign in immediately (works when email confirm is off)
+      if (!accessToken) {
+        console.log("[SupabaseAuth] No session on signup, attempting sign-in...");
+        try {
+          const signInResult = await this.signIn(email, password);
+          accessToken = signInResult.session;
+          refreshToken = signInResult.refreshToken;
+          authUser.emailConfirmed = signInResult.user.emailConfirmed;
+          console.log("[SupabaseAuth] Sign-in after signup succeeded");
+        } catch (signInErr: any) {
+          console.warn("[SupabaseAuth] Sign-in after signup failed:", signInErr?.message);
+        }
+      }
+
       return {
-        user: {
-          id: response.user.id,
-          email: response.user.email,
-          role,
-          profileCompleted: false,
-          emailConfirmed,
-        },
-        session: response.session?.access_token || "",
-        refreshToken: response.session?.refresh_token,
+        user: authUser,
+        session: accessToken,
+        refreshToken,
       };
     } catch (error: any) {
       console.error("[SupabaseAuth] Sign-up failed:", {
@@ -330,15 +352,15 @@ class SupabaseAuthClient {
       }
 
       const data = await response.json();
-      const supabaseUser = data.user;
+      // GET /auth/v1/user returns the user object directly (not always wrapped in .user)
+      const supabaseUser = data.user ?? data;
 
-      if (!supabaseUser || !supabaseUser.id) {
+      if (!supabaseUser?.id) {
         console.warn("[SupabaseAuth] No user found in response");
         return null;
       }
 
-      // Extract user metadata (role, profileCompleted, etc.)
-      const metadata = supabaseUser.user_metadata || {};
+      const metadata = supabaseUser.user_metadata || supabaseUser.raw_user_meta_data || {};
 
       const authUser: AuthUser = {
         id: supabaseUser.id,

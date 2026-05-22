@@ -1,54 +1,51 @@
-import { Platform } from "react-native";
+// lib/vehicles.ts
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 import { supabaseUserData } from "@/lib/_core/supabase-user-data";
-import type { UserVehicle } from "@/lib/_core/supabase-user-data";
 
-const SESSION_TOKEN_KEY = "wrenchup_session_token";
-
-async function getSessionToken(): Promise<string | null> {
+/** Helper: Get session token */
+async function getSessionTokenFromStorage(): Promise<string | null> {
   try {
     if (Platform.OS === "web") {
-      return await AsyncStorage.getItem(SESSION_TOKEN_KEY);
+      return await AsyncStorage.getItem("wrenchup_session_token");
+    } else {
+      return await SecureStore.getItemAsync("wrenchup_session_token");
     }
-    return await SecureStore.getItemAsync(SESSION_TOKEN_KEY);
   } catch (err) {
     console.error("[vehicles] Failed to get session token:", err);
     return null;
   }
 }
 
-/**
- * Returns true if the user has at least one row in user_vehicles.
- * Requires a valid Supabase session (RLS).
- */
+/** Check if user has vehicles */
 export async function userHasVehicles(
   userId: string,
   sessionToken?: string
 ): Promise<boolean> {
-  const token = sessionToken ?? (await getSessionToken());
-  if (!token) {
-    console.warn("[vehicles] No session token — cannot check vehicles");
+  if (!userId) {
+    console.warn("[vehicles] No userId provided");
     return false;
   }
 
   try {
+    let token = sessionToken;
+
+    if (!token) {
+      token = await getSessionTokenFromStorage();
+    }
+
+    if (!token) {
+      console.warn("[vehicles] No session token available");
+      return false;
+    }
+
     const vehicles = await supabaseUserData.getUserVehicles(userId, token);
+
+    console.log(`[vehicles] ✅ Found ${vehicles.length} vehicle(s) for user ${userId}`);
     return vehicles.length > 0;
   } catch (err) {
-    console.error("[vehicles] Error checking vehicles:", err);
+    console.error("[vehicles] ❌ Error checking vehicles:", err);
     return false;
   }
-}
-
-/** Fetch all vehicles for a user from Supabase. */
-export async function fetchUserVehicles(
-  userId: string,
-  sessionToken?: string
-): Promise<UserVehicle[]> {
-  const token = sessionToken ?? (await getSessionToken());
-  if (!token) {
-    throw new Error("Not authenticated");
-  }
-  return supabaseUserData.getUserVehicles(userId, token);
 }

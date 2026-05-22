@@ -3,19 +3,21 @@
  * Personal info, vehicle management, and logout
  */
 
-import { useRouter } from "expo-router";
-import { useState, useEffect } from "react";
+import { useRouter, useFocusEffect } from "expo-router";
+import { safeReplace } from "@/lib/safe-router";
+import { useState, useEffect, useCallback } from "react";
 import { ScreenContainer } from "@/components/screen-container";
+import { ScreenMenuHeader } from "@/components/screen-menu-header";
 import { useStore } from "@/lib/store";
-import { useAuth, useClearUserData } from "@/lib/auth-context";
+import { useAuth, useClearUserData, useLoadUserData } from "@/lib/auth-context";
 import { useT } from "@/hooks/use-locale";
 import { useColors } from "@/hooks/use-colors";
 import { supabaseUserData } from "@/lib/_core/supabase-user-data";
-import { supabaseStorage } from "@/lib/_core/supabase-storage";
+import { saveProfileAvatar } from "@/lib/profile-avatar";
+import { resolveAuthSession } from "@/lib/resolve-auth-session";
 import { useImagePicker } from "@/hooks/use-image-picker";
 import { Avatar } from "@/components/avatar";
-import * as SecureStore from "expo-secure-store";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getSessionToken } from "@/lib/auth-context";
 import {
   ScrollView,
   View,
@@ -24,7 +26,6 @@ import {
   Pressable,
   ActivityIndicator,
   Alert,
-  Platform,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 
@@ -32,6 +33,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { state, dispatch } = useStore();
   const { user, signOut, isLoading: isAuthLoading } = useAuth();
+  const loadUserData = useLoadUserData();
   const t = useT();
   const colors = useColors();
 
@@ -51,12 +53,13 @@ export default function ProfileScreen() {
   // Photo upload state
   const [photoUrl, setPhotoUrl] = useState(state.photoUrl || "");
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const { pickImage } = useImagePicker();
+  const { pickProfileImage } = useImagePicker();
 
   // Loading state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const profileSyncing = state.userDataStatus === "loading";
 
   // Sync email when user changes
   useEffect(() => {
@@ -66,28 +69,47 @@ export default function ProfileScreen() {
     }
   }, [user]);
 
-  // Load session token on mount
-  useEffect(() => {
-    const loadSessionToken = async () => {
-      try {
-        let token: string | null = null;
-        if (Platform.OS === "web") {
-          token = await AsyncStorage.getItem("wrenchup_session_token");
-        } else {
-          token = await SecureStore.getItemAsync("wrenchup_session_token");
-        }
-        setSessionToken(token);
-        console.log("[ProfileScreen] Session token loaded:", token ? "✓ Found" : "✗ Not found");
-      } catch (err) {
-        console.error("[ProfileScreen] Failed to load session token:", err);
-      }
-    };
-    loadSessionToken();
-  }, []);
+  // Refresh profile + vehicles when the tab is focused (uses in-memory token first)
+  useFocusEffect(
+    useCallback(() => {
+      if (!user?.id) return;
 
-  // Handle photo upload
+      let cancelled = false;
+      (async () => {
+        try {
+          const token = await getSessionToken();
+          if (cancelled || !token) return;
+          setSessionToken(token);
+          await loadUserData(token, user);
+        } catch (err) {
+          console.error("[ProfileScreen] Failed to refresh profile:", err);
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [user?.id, loadUserData, user])
+  );
+
+  // Keep local UI in sync with store after LOAD_USER_DATA
+  useEffect(() => {
+    setSelectedVehicleId(state.selectedVehicleId);
+  }, [state.selectedVehicleId]);
+
+  useEffect(() => {
+    setName(state.userName || "");
+  }, [state.userName]);
+
+  // Sync avatar from store after LOAD_USER_DATA (logout → login persistence)
+  useEffect(() => {
+    setPhotoUrl(state.photoUrl || "");
+    console.log("[ProfileScreen] Avatar synced from store:", state.photoUrl ? "yes" : "no");
+  }, [state.photoUrl]);
+
+  // Handle photo upload — camera/gallery → Storage → avatar_url → reload store
   const handlePhotoUpload = async () => {
-    if (!user || !sessionToken) {
+    if (!user?.id) {
       setError("Not authenticated. Please log in again.");
       return;
     }
@@ -96,33 +118,27 @@ export default function ProfileScreen() {
       setUploadingPhoto(true);
       setError(null);
 
-      const image = await pickImage();
+      const image = await pickProfileImage();
       if (!image) {
-        setUploadingPhoto(false);
         return;
       }
 
-      console.log("[ProfileScreen] Uploading photo...", { size: image.base64.length });
+      const resolved = await resolveAuthSession(user, (err) => setError(err.message));
+      if (!resolved) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        return;
+      }
+      const { sessionToken: token } = resolved;
+      setSessionToken(token);
 
-      // Upload to Supabase Storage
-      const uploadResult = await supabaseStorage.uploadProfilePhoto(
-        user.id,
-        image.base64,
-        image.mimeType,
-        sessionToken
-      );
+      console.log("[ProfileScreen] Uploading profile photo...", { size: image.base64.length });
+      const publicUrl = await saveProfileAvatar(user.id, image, token);
 
-      console.log("[ProfileScreen] Photo uploaded:", uploadResult.publicUrl);
+      setPhotoUrl(publicUrl);
+      dispatch({ type: "SET_PHOTO_URL", payload: publicUrl });
 
-      // Update profile with photo URL
-      await supabaseUserData.updateProfilePhoto(user.id, uploadResult.publicUrl, sessionToken);
-
-      // Update local state
-      setPhotoUrl(uploadResult.publicUrl);
-      dispatch({
-        type: "SET_PHOTO_URL",
-        payload: uploadResult.publicUrl,
-      });
+      await loadUserData(token, user);
+      console.log("[ProfileScreen] Profile photo saved and store refreshed");
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
@@ -142,9 +158,15 @@ export default function ProfileScreen() {
 
   const selectedVehicle = state.vehicles.find((v) => v.id === selectedVehicleId);
 
+  // Persist full_name to Supabase (same session refresh pattern as vehicles)
   const handleSaveName = async () => {
     if (!name.trim()) {
       setError("Name cannot be empty");
+      return;
+    }
+
+    if (!user?.id) {
+      setError("Not authenticated. Please log in again.");
       return;
     }
 
@@ -153,11 +175,31 @@ export default function ProfileScreen() {
 
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      const resolved = await resolveAuthSession(user, (err) => setError(err.message));
+      if (!resolved) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        return;
+      }
+      const { sessionToken: token } = resolved;
+      setSessionToken(token);
+
+      console.log("[ProfileScreen] Saving full_name to Supabase:", name.trim());
+      await supabaseUserData.updateProfile(
+        user.id,
+        { full_name: name.trim(), email: user.email },
+        token,
+        user.email
+      );
+
       dispatch({ type: "SET_USER_NAME", payload: name.trim() });
+      await loadUserData(token, user);
+
       setEditingName(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (err) {
-      setError("Failed to save name");
+    } catch (err: any) {
+      console.error("[ProfileScreen] Name save failed:", err);
+      setError(err?.message || "Failed to save name");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
@@ -193,16 +235,7 @@ export default function ProfileScreen() {
         return;
       }
 
-      // Use stored session token or try to get it
-      let token = sessionToken;
-      if (!token) {
-        console.log("[ProfileScreen] Session token not in state, fetching...");
-        if (Platform.OS === "web") {
-          token = await AsyncStorage.getItem("wrenchup_session_token");
-        } else {
-          token = await SecureStore.getItemAsync("wrenchup_session_token");
-        }
-      }
+      let token = sessionToken ?? (await getSessionToken());
 
       if (!token) {
         console.error("[ProfileScreen] No session token available");
@@ -255,7 +288,7 @@ export default function ProfileScreen() {
             clearUserData();
             await signOut();
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            router.replace("/auth/signin");
+            safeReplace("/auth/signin");
           } catch (err) {
             setError("Failed to log out");
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -269,13 +302,17 @@ export default function ProfileScreen() {
   };
 
   return (
-    <ScreenContainer className="bg-background">
-      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 32 }} showsVerticalScrollIndicator={false}>
+    <ScreenContainer className="bg-background" edges={["left", "right", "bottom"]}>
+      <ScreenMenuHeader title={t("tabs.profile")} />
+      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 32, paddingHorizontal: 20 }} showsVerticalScrollIndicator={false}>
         {/* Header */}
-        <View className="mb-8 mt-6">
-          <Text className="text-4xl font-bold text-foreground">Profile</Text>
-          {isAuthLoading ? (
-            <Text className="text-base text-muted mt-2">Loading...</Text>
+        <View className="mb-8 mt-4">
+          <Text className="text-2xl font-bold text-foreground">Profile</Text>
+          {isAuthLoading || profileSyncing ? (
+            <View className="flex-row items-center gap-2 mt-2">
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text className="text-base text-muted">Loading profile…</Text>
+            </View>
           ) : user?.email ? (
             <Text className="text-base text-muted mt-2">{user.email}</Text>
           ) : (
@@ -295,7 +332,7 @@ export default function ProfileScreen() {
               )}
             </View>
           </Pressable>
-          <Text className="text-sm text-muted mt-3">Tap to change photo</Text>
+          <Text className="text-sm text-muted mt-3">Tap to change — camera or gallery</Text>
         </View>
 
         {/* Error Message */}
@@ -351,7 +388,9 @@ export default function ProfileScreen() {
                 className="flex-row justify-between items-center"
                 onPress={() => setEditingName(true)}
               >
-                <Text className="text-foreground text-base">{name || "Not set"}</Text>
+                <Text className="text-foreground text-base">
+                  {profileSyncing && !name ? "Loading…" : name || "Not set"}
+                </Text>
                 <Text className="text-primary">Edit</Text>
               </Pressable>
             )}
@@ -443,7 +482,12 @@ export default function ProfileScreen() {
             </Pressable>
           </View>
 
-          {state.vehicles.length === 0 ? (
+          {profileSyncing && state.vehicles.length === 0 ? (
+            <View className="bg-surface rounded-lg p-6 items-center border border-border">
+              <ActivityIndicator color={colors.primary} />
+              <Text className="text-muted text-center mt-3">Loading vehicles…</Text>
+            </View>
+          ) : state.vehicles.length === 0 ? (
             <View className="bg-surface rounded-lg p-6 items-center border border-border">
               <Text className="text-muted text-center">No vehicles added yet</Text>
               <Text className="text-muted text-sm mt-2">Add your first vehicle to get started</Text>

@@ -34,9 +34,17 @@ export type StringKey =
   | "home.change"
   | "home.request_mechanic"
   | "home.quick_services"
-  | "home.promo_tag"
-  | "home.promo_title"
-  | "home.promo_subtitle"
+  | "home.symptom.title"
+  | "home.symptom.subtitle"
+  | "home.symptom.placeholder"
+  | "home.symptom.vehicle"
+  | "home.symptom.diagnose"
+  | "home.symptom.diagnosing"
+  | "home.symptom.recommended"
+  | "home.symptom.book_now"
+  | "home.symptom.try_again"
+  | "home.symptom.error_short"
+  | "home.symptom.error_failed"
   | "home.top_mechanics"
   | "home.see_all"
   | "home.no_vehicle"
@@ -248,7 +256,58 @@ export type StringKey =
   | "payment.no_methods"
   | "payment.add_card"
   | "payment.delete_confirm_title"
-  | "payment.delete_confirm_msg";
+  | "payment.delete_confirm_msg"
+  | "auth.signin.title"
+  | "auth.signin.subtitle"
+  | "auth.signin.email"
+  | "auth.signin.password"
+  | "auth.signin.password_placeholder"
+  | "auth.signin.forgot"
+  | "auth.signin.cta"
+  | "auth.signin.no_account"
+  | "auth.signin.sign_up"
+  | "auth.signin.show"
+  | "auth.signin.hide"
+  | "auth.signin.error_email_required"
+  | "auth.signin.error_email_invalid"
+  | "auth.signin.error_password_required"
+  | "auth.signin.error_failed"
+  | "auth.signin.error_invalid_credentials"
+  | "auth.signin.error_user_not_found"
+  | "auth.forgot.title"
+  | "auth.forgot.subtitle"
+  | "auth.forgot.email"
+  | "auth.forgot.cta"
+  | "auth.forgot.back"
+  | "auth.forgot.success"
+  | "auth.forgot.error_email_required"
+  | "auth.forgot.error_email_invalid"
+  | "auth.forgot.error_failed"
+  | "auth.signup.title"
+  | "auth.signup.subtitle"
+  | "auth.signup.role_label"
+  | "auth.signup.role_customer"
+  | "auth.signup.role_customer_desc"
+  | "auth.signup.role_mechanic"
+  | "auth.signup.role_mechanic_desc"
+  | "auth.signup.email"
+  | "auth.signup.password"
+  | "auth.signup.password_placeholder"
+  | "auth.signup.confirm_password"
+  | "auth.signup.confirm_placeholder"
+  | "auth.signup.cta"
+  | "auth.signup.has_account"
+  | "auth.signup.sign_in"
+  | "auth.signup.error_email_required"
+  | "auth.signup.error_email_invalid"
+  | "auth.signup.error_password_required"
+  | "auth.signup.error_password_short"
+  | "auth.signup.error_password_mismatch"
+  | "auth.signup.error_failed"
+  | "auth.signup.error_exists"
+  | "auth.signup.error_weak_password"
+  | "auth.signup.error_session"
+  | "auth.signup.error_verify_email";
 
 export type Strings = Record<StringKey, string>;
 
@@ -280,9 +339,17 @@ export const STRINGS_EN: Strings = {
   "home.change": "Change",
   "home.request_mechanic": "Request a Mechanic",
   "home.quick_services": "Quick services",
-  "home.promo_tag": "NEW USER",
-  "home.promo_title": "20% off your first service",
-  "home.promo_subtitle": "Auto-applied at checkout",
+  "home.symptom.title": "What's wrong with your car?",
+  "home.symptom.subtitle": "Describe your issue — AI will find the right service",
+  "home.symptom.placeholder": "e.g. Car won't start, clicking sound when I turn the key…",
+  "home.symptom.vehicle": "Vehicle",
+  "home.symptom.diagnose": "Diagnose",
+  "home.symptom.diagnosing": "Diagnosing…",
+  "home.symptom.recommended": "Recommended service",
+  "home.symptom.book_now": "Book Now",
+  "home.symptom.try_again": "Describe a different issue",
+  "home.symptom.error_short": "Please add a few more details about the problem.",
+  "home.symptom.error_failed": "Could not diagnose right now. Please try again.",
   "home.top_mechanics": "Top mechanics near you",
   "home.see_all": "See all",
   "home.no_vehicle": "No vehicle selected",
@@ -495,6 +562,57 @@ export const STRINGS_EN: Strings = {
   "payment.add_card": "Add Card",
   "payment.delete_confirm_title": "Delete Card",
   "payment.delete_confirm_msg": "Are you sure you want to delete this card?",
+  "auth.signin.title": "Welcome Back",
+  "auth.signin.subtitle": "Sign in to your WrenchUp account",
+  "auth.signin.email": "Email",
+  "auth.signin.password": "Password",
+  "auth.signin.password_placeholder": "Enter your password",
+  "auth.signin.forgot": "Forgot password?",
+  "auth.signin.cta": "Sign In",
+  "auth.signin.no_account": "Don't have an account?",
+  "auth.signin.sign_up": "Sign Up",
+  "auth.signin.show": "Show",
+  "auth.signin.hide": "Hide",
+  "auth.signin.error_email_required": "Email is required",
+  "auth.signin.error_email_invalid": "Please enter a valid email address",
+  "auth.signin.error_password_required": "Password is required",
+  "auth.signin.error_failed": "Sign-in failed. Please try again.",
+  "auth.signin.error_invalid_credentials": "Invalid email or password. Please try again.",
+  "auth.signin.error_user_not_found": "No account found with this email. Please sign up first.",
+  "auth.forgot.title": "Reset Password",
+  "auth.forgot.subtitle": "Enter your email to receive a password reset link",
+  "auth.forgot.email": "Email",
+  "auth.forgot.cta": "Send Reset Link",
+  "auth.forgot.back": "Back to Sign In",
+  "auth.forgot.success": "Check your email for a password reset link. It may take a few minutes to arrive.",
+  "auth.forgot.error_email_required": "Please enter your email address",
+  "auth.forgot.error_email_invalid": "Please enter a valid email address",
+  "auth.forgot.error_failed": "Failed to send reset email. Please try again.",
+  "auth.signup.title": "Create Account",
+  "auth.signup.subtitle": "Join WrenchUp and get started",
+  "auth.signup.role_label": "I am a:",
+  "auth.signup.role_customer": "Customer",
+  "auth.signup.role_customer_desc": "Need a mechanic",
+  "auth.signup.role_mechanic": "Mechanic",
+  "auth.signup.role_mechanic_desc": "Offer services",
+  "auth.signup.email": "Email",
+  "auth.signup.password": "Password",
+  "auth.signup.password_placeholder": "At least 8 characters",
+  "auth.signup.confirm_password": "Confirm Password",
+  "auth.signup.confirm_placeholder": "Repeat password",
+  "auth.signup.cta": "Create Account",
+  "auth.signup.has_account": "Already have an account?",
+  "auth.signup.sign_in": "Sign In",
+  "auth.signup.error_email_required": "Email is required",
+  "auth.signup.error_email_invalid": "Please enter a valid email address",
+  "auth.signup.error_password_required": "Password is required",
+  "auth.signup.error_password_short": "Password must be at least 8 characters",
+  "auth.signup.error_password_mismatch": "Passwords do not match",
+  "auth.signup.error_failed": "Sign-up failed. Please try again.",
+  "auth.signup.error_exists": "This email is already registered. Please sign in instead.",
+  "auth.signup.error_weak_password": "Password is too weak. Use at least 8 characters with letters and numbers.",
+  "auth.signup.error_session": "Account created but session could not start. Please sign in to finish your profile.",
+  "auth.signup.error_verify_email": "Account created! Check your email to verify, then sign in to complete your profile.",
 };
 
 export const STRINGS_ES_MX: Strings = {
@@ -525,9 +643,17 @@ export const STRINGS_ES_MX: Strings = {
   "home.change": "Cambiar",
   "home.request_mechanic": "Solicitar un mecánico",
   "home.quick_services": "Servicios rápidos",
-  "home.promo_tag": "NUEVO USUARIO",
-  "home.promo_title": "20% de descuento en tu primer servicio",
-  "home.promo_subtitle": "Aplicado automáticamente al pagar",
+  "home.symptom.title": "¿Qué le pasa a tu auto?",
+  "home.symptom.subtitle": "Describe el problema — la IA encontrará el servicio correcto",
+  "home.symptom.placeholder": "ej. No enciende, hace clic al girar la llave…",
+  "home.symptom.vehicle": "Vehículo",
+  "home.symptom.diagnose": "Diagnosticar",
+  "home.symptom.diagnosing": "Diagnosticando…",
+  "home.symptom.recommended": "Servicio recomendado",
+  "home.symptom.book_now": "Reservar ahora",
+  "home.symptom.try_again": "Describir otro problema",
+  "home.symptom.error_short": "Agrega un poco más de detalle sobre el problema.",
+  "home.symptom.error_failed": "No se pudo diagnosticar. Intenta de nuevo.",
   "home.top_mechanics": "Mejores mecánicos cerca de ti",
   "home.see_all": "Ver todos",
   "home.no_vehicle": "Sin vehículo seleccionado",
@@ -740,6 +866,57 @@ export const STRINGS_ES_MX: Strings = {
   "payment.add_card": "Agregar Tarjeta",
   "payment.delete_confirm_title": "Eliminar Tarjeta",
   "payment.delete_confirm_msg": "¿Estás seguro de que deseas eliminar esta tarjeta?",
+  "auth.signin.title": "Bienvenido de nuevo",
+  "auth.signin.subtitle": "Inicia sesión en tu cuenta de WrenchUp",
+  "auth.signin.email": "Correo electrónico",
+  "auth.signin.password": "Contraseña",
+  "auth.signin.password_placeholder": "Ingresa tu contraseña",
+  "auth.signin.forgot": "¿Olvidaste tu contraseña?",
+  "auth.signin.cta": "Iniciar sesión",
+  "auth.signin.no_account": "¿No tienes cuenta?",
+  "auth.signin.sign_up": "Regístrate",
+  "auth.signin.show": "Mostrar",
+  "auth.signin.hide": "Ocultar",
+  "auth.signin.error_email_required": "El correo es obligatorio",
+  "auth.signin.error_email_invalid": "Ingresa un correo válido",
+  "auth.signin.error_password_required": "La contraseña es obligatoria",
+  "auth.signin.error_failed": "No se pudo iniciar sesión. Intenta de nuevo.",
+  "auth.signin.error_invalid_credentials": "Correo o contraseña incorrectos. Intenta de nuevo.",
+  "auth.signin.error_user_not_found": "No hay cuenta con este correo. Regístrate primero.",
+  "auth.forgot.title": "Restablecer contraseña",
+  "auth.forgot.subtitle": "Ingresa tu correo para recibir un enlace de restablecimiento",
+  "auth.forgot.email": "Correo electrónico",
+  "auth.forgot.cta": "Enviar enlace",
+  "auth.forgot.back": "Volver a iniciar sesión",
+  "auth.forgot.success": "Revisa tu correo para el enlace de restablecimiento. Puede tardar unos minutos.",
+  "auth.forgot.error_email_required": "Ingresa tu correo electrónico",
+  "auth.forgot.error_email_invalid": "Ingresa un correo válido",
+  "auth.forgot.error_failed": "No se pudo enviar el correo. Intenta de nuevo.",
+  "auth.signup.title": "Crear cuenta",
+  "auth.signup.subtitle": "Únete a WrenchUp y comienza",
+  "auth.signup.role_label": "Soy:",
+  "auth.signup.role_customer": "Cliente",
+  "auth.signup.role_customer_desc": "Necesito un mecánico",
+  "auth.signup.role_mechanic": "Mecánico",
+  "auth.signup.role_mechanic_desc": "Ofrezco servicios",
+  "auth.signup.email": "Correo electrónico",
+  "auth.signup.password": "Contraseña",
+  "auth.signup.password_placeholder": "Mínimo 8 caracteres",
+  "auth.signup.confirm_password": "Confirmar contraseña",
+  "auth.signup.confirm_placeholder": "Repite la contraseña",
+  "auth.signup.cta": "Crear cuenta",
+  "auth.signup.has_account": "¿Ya tienes cuenta?",
+  "auth.signup.sign_in": "Iniciar sesión",
+  "auth.signup.error_email_required": "El correo es obligatorio",
+  "auth.signup.error_email_invalid": "Ingresa un correo válido",
+  "auth.signup.error_password_required": "La contraseña es obligatoria",
+  "auth.signup.error_password_short": "La contraseña debe tener al menos 8 caracteres",
+  "auth.signup.error_password_mismatch": "Las contraseñas no coinciden",
+  "auth.signup.error_failed": "No se pudo crear la cuenta. Intenta de nuevo.",
+  "auth.signup.error_exists": "Este correo ya está registrado. Inicia sesión.",
+  "auth.signup.error_weak_password": "Contraseña débil. Usa al menos 8 caracteres con letras y números.",
+  "auth.signup.error_session": "Cuenta creada, pero no se inició la sesión. Inicia sesión para terminar tu perfil.",
+  "auth.signup.error_verify_email": "¡Cuenta creada! Verifica tu correo y luego inicia sesión para completar tu perfil.",
 };
 
 const TABLES: Record<LocaleCode, Strings> = {

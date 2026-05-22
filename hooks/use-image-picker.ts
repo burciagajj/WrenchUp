@@ -1,12 +1,11 @@
 /**
  * Image Picker Hook (v1.8)
- * Handles image selection from device library
- * Returns base64 encoded image data
+ * Gallery + camera for profile photos; returns base64 encoded image data.
  */
 
 import { useCallback } from "react";
+import { Alert, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { Platform } from "react-native";
 
 export type PickedImage = {
   base64: string;
@@ -14,63 +13,125 @@ export type PickedImage = {
   filename: string;
   width: number;
   height: number;
+  /** Local URI for on-screen preview before upload */
+  uri: string;
 };
 
-export function useImagePicker() {
-  const pickImage = useCallback(async (): Promise<PickedImage | null> => {
-    try {
-      // Request permissions
-      if (Platform.OS !== "web") {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== "granted") {
-          console.warn("[useImagePicker] Media library permission denied");
-          return null;
-        }
-      }
+type ImagePickerOptions = {
+  allowsEditing?: boolean;
+  aspect?: [number, number];
+  quality?: number;
+};
 
-      // Launch image picker
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: true,
-        aspect: [1, 1], // Square for profile photo
-        quality: 0.8,
-        base64: true,
-      });
+async function launchPicker(
+  source: "library" | "camera",
+  options: ImagePickerOptions = {}
+): Promise<PickedImage | null> {
+  const { allowsEditing = true, aspect = [1, 1], quality = 0.8 } = options;
 
-      if (result.canceled) {
-        console.log("[useImagePicker] Image selection cancelled");
+  if (Platform.OS !== "web") {
+    if (source === "library") {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        console.warn("[useImagePicker] Media library permission denied");
         return null;
       }
-
-      const asset = result.assets[0];
-      if (!asset.base64) {
-        console.error("[useImagePicker] No base64 data returned");
+    } else {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        console.warn("[useImagePicker] Camera permission denied");
         return null;
       }
-
-      // Determine MIME type
-      const filename = asset.uri.split("/").pop() || "photo.jpg";
-      const mimeType = asset.mimeType || "image/jpeg";
-
-      console.log("[useImagePicker] Image selected:", {
-        filename,
-        width: asset.width,
-        height: asset.height,
-        size: asset.base64.length,
-      });
-
-      return {
-        base64: asset.base64,
-        mimeType,
-        filename,
-        width: asset.width,
-        height: asset.height,
-      };
-    } catch (err) {
-      console.error("[useImagePicker] Failed to pick image:", err);
-      return null;
     }
-  }, []);
+  }
 
-  return { pickImage };
+  const pickerOptions: ImagePicker.ImagePickerOptions = {
+    mediaTypes: ["images"],
+    allowsEditing,
+    aspect,
+    quality,
+    base64: true,
+  };
+
+  const result =
+    source === "library"
+      ? await ImagePicker.launchImageLibraryAsync(pickerOptions)
+      : await ImagePicker.launchCameraAsync(pickerOptions);
+
+  if (result.canceled) {
+    console.log(`[useImagePicker] ${source} selection cancelled`);
+    return null;
+  }
+
+  const asset = result.assets[0];
+  if (!asset.base64) {
+    console.error("[useImagePicker] No base64 data returned");
+    return null;
+  }
+
+  const filename = asset.uri.split("/").pop() || "photo.jpg";
+  const mimeType = asset.mimeType || "image/jpeg";
+
+  console.log("[useImagePicker] Image selected:", {
+    source,
+    filename,
+    width: asset.width,
+    height: asset.height,
+    size: asset.base64.length,
+  });
+
+  return {
+    base64: asset.base64,
+    mimeType,
+    filename,
+    width: asset.width,
+    height: asset.height,
+    uri: asset.uri,
+  };
+}
+
+export function useImagePicker() {
+  const pickImageFromGallery = useCallback(
+    () => launchPicker("library"),
+    []
+  );
+
+  const pickImageFromCamera = useCallback(
+    () => launchPicker("camera"),
+    []
+  );
+
+  /** Legacy alias — opens gallery only */
+  const pickImage = pickImageFromGallery;
+
+  /**
+   * Show camera vs gallery chooser (native Alert).
+   * On web, falls back to gallery only.
+   */
+  const pickProfileImage = useCallback((): Promise<PickedImage | null> => {
+    if (Platform.OS === "web") {
+      return pickImageFromGallery();
+    }
+
+    return new Promise((resolve) => {
+      Alert.alert("Profile Photo", "Choose a source", [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(null) },
+        {
+          text: "Take Photo",
+          onPress: async () => resolve(await pickImageFromCamera()),
+        },
+        {
+          text: "Choose from Gallery",
+          onPress: async () => resolve(await pickImageFromGallery()),
+        },
+      ]);
+    });
+  }, [pickImageFromGallery, pickImageFromCamera]);
+
+  return {
+    pickImage,
+    pickImageFromGallery,
+    pickImageFromCamera,
+    pickProfileImage,
+  };
 }

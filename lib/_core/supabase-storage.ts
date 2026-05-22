@@ -1,6 +1,10 @@
 /**
  * Supabase Storage API (v1.7)
- * Handles photo uploads to Supabase Storage buckets
+ * Handles photo uploads to Supabase Storage buckets.
+ *
+ * Requires bucket `profile-photos` — run once:
+ *   supabase/migrations/002_profile_photos_bucket.sql (SQL Editor)
+ * or: node scripts/setup-profile-photos-bucket.mjs (needs SUPABASE_SERVICE_ROLE_KEY)
  */
 
 export type StorageUploadResult = {
@@ -8,9 +12,14 @@ export type StorageUploadResult = {
   publicUrl: string;
 };
 
+/** Shown when direct Storage upload fails (app may still use data-URL fallback). */
+export const PROFILE_PHOTOS_BUCKET_SETUP =
+  "Profile photo storage bucket is missing. The app will save your photo directly to your profile, or run supabase/migrations/002_profile_photos_bucket.sql in Supabase SQL Editor for Storage uploads.";
+
 class SupabaseStorageClient {
   private supabaseUrl: string;
   private supabaseKey: string;
+  /** Must match storage.buckets.id in 002_profile_photos_bucket.sql */
   private bucketName = "profile-photos";
 
   constructor() {
@@ -55,16 +64,24 @@ class SupabaseStorageClient {
           apikey: this.supabaseKey,
           Authorization: `Bearer ${sessionToken}`,
           "Content-Type": mimeType,
+          "x-upsert": "true",
         },
         body: bytes,
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
+        const errMessage =
+          error.message || error.error || `Upload failed: ${response.status}`;
         console.error(`[SupabaseStorage] Upload error: ${response.status}`, error);
+
+        const isBucketMissing =
+          errMessage.toLowerCase().includes("bucket not found") ||
+          error.error === "Bucket not found";
+
         throw {
-          code: error.error || `http_${response.status}`,
-          message: error.message || `Upload failed: ${response.status}`,
+          code: isBucketMissing ? "bucket_not_found" : error.error || `http_${response.status}`,
+          message: isBucketMissing ? PROFILE_PHOTOS_BUCKET_SETUP : errMessage,
         };
       }
 

@@ -2,6 +2,8 @@ import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { useMemo, useState } from "react";
 import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
+import { useAppDrawer } from "@/lib/app-drawer-context";
+import { useT } from "@/hooks/use-locale";
 import { useStore } from "@/lib/store";
 import { getMechanic, getServiceType } from "@/lib/seed";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -24,6 +26,8 @@ function isActive(status: JobStatus): boolean {
 export default function ActivityScreen() {
   const router = useRouter();
   const { state } = useStore();
+  const t = useT();
+  const { openDrawer } = useAppDrawer();
   const [filter, setFilter] = useState<Filter>("all");
 
   const filtered = useMemo(() => {
@@ -45,9 +49,21 @@ export default function ActivityScreen() {
   };
 
   return (
-    <ScreenContainer>
+    <ScreenContainer edges={["left", "right", "bottom"]}>
+      {/* Orange Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Activity</Text>
+        <Pressable
+          onPress={() => { haptic.light(); openDrawer(); }}
+          style={({ pressed }) => [styles.menuButton, pressed && { opacity: 0.7 }]}
+          hitSlop={8}
+        >
+          <IconSymbol name="line.3.horizontal" size={22} color="#FFFFFF" />
+        </Pressable>
+        <Text style={styles.headerTitle}>{t("tabs.activity")}</Text>
+        <View style={{ width: 40 }} />
+      </View>
+
+      <View style={styles.subheader}>
         <Text style={styles.subtitle}>Your service history</Text>
       </View>
 
@@ -144,9 +160,29 @@ function StatusChip({ status }: { status: JobStatus }) {
 }
 
 const styles = StyleSheet.create({
-  header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  title: { fontSize: 28, fontWeight: "800", color: "#0F172A" },
-  subtitle: { fontSize: 14, color: "#64748B", marginTop: 2 },
+  header: {
+    backgroundColor: "#F97316",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  menuButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  subheader: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 },
+  subtitle: { fontSize: 14, color: "#64748B" },
   filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: 20, paddingBottom: 16 },
   filterChip: {
     paddingHorizontal: 14,

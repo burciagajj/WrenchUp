@@ -21,12 +21,16 @@ import type { EdgeInsets, Metrics, Rect } from "react-native-safe-area-context";
 import { trpc, createTRPCClient } from "@/lib/trpc";
 import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-runtime";
 import { AuthProvider } from "@/lib/auth-context";
+import { UserDataSync } from "@/components/user-data-sync";
+import { RegionBootstrap } from "@/components/region-bootstrap";
+import { AppDrawerProvider } from "@/lib/app-drawer-context";
+import { AuthenticatedDrawer } from "@/components/authenticated-drawer";
 
 const DEFAULT_WEB_INSETS: EdgeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 const DEFAULT_WEB_FRAME: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
 export const unstable_settings = {
-  anchor: "(tabs)",
+  anchor: "index",
 };
 
 export default function RootLayout() {
@@ -90,26 +94,32 @@ export default function RootLayout() {
           {/* in order for ios apps tab switching to work properly, use presentation: "fullScreenModal" for login page, whenever you decide to use presentation: "modal*/}
           <AuthProvider>
             <StoreProvider>
-              <AppStripeProvider>
-              <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="oauth/callback" />
-              <Stack.Screen name="auth/signup" />
-              <Stack.Screen name="auth/signin" />
-              <Stack.Screen name="auth/profile-complete" />
-              <Stack.Screen name="service-select" options={{ presentation: "modal" }} />
-              <Stack.Screen name="mechanics" />
-              <Stack.Screen name="mechanic/[id]" />
-              <Stack.Screen name="confirm" />
-              <Stack.Screen name="tracking" />
-              <Stack.Screen name="complete" />
-              <Stack.Screen name="job/[id]" />
-              <Stack.Screen name="vehicle-form" options={{ presentation: "modal" }} />
-              <Stack.Screen name="payment-methods" options={{ presentation: "modal" }} />
-              <Stack.Screen name="mechanic/incoming" options={{ presentation: "modal" }} />
-              <Stack.Screen name="mechanic/active" />
-              </Stack>
-              </AppStripeProvider>
+              <AppDrawerProvider>
+                <RegionBootstrap />
+                <UserDataSync />
+                <AppStripeProvider>
+                  <Stack screenOptions={{ headerShown: false }}>
+                    <Stack.Screen name="index" />
+                    <Stack.Screen name="(tabs)" />
+                    <Stack.Screen name="oauth/callback" />
+                    <Stack.Screen name="auth/signup" />
+                    <Stack.Screen name="auth/signin" />
+                    <Stack.Screen name="auth/profile-complete" />
+                    <Stack.Screen name="service-select" options={{ presentation: "modal" }} />
+                    <Stack.Screen name="mechanics" />
+                    <Stack.Screen name="mechanic/[id]" />
+                    <Stack.Screen name="confirm" />
+                    <Stack.Screen name="tracking" />
+                    <Stack.Screen name="complete" />
+                    <Stack.Screen name="job/[id]" />
+                    <Stack.Screen name="vehicle-form" options={{ presentation: "modal" }} />
+                    <Stack.Screen name="payment-methods" options={{ presentation: "modal" }} />
+                    <Stack.Screen name="mechanic/incoming" options={{ presentation: "modal" }} />
+                    <Stack.Screen name="mechanic/active" />
+                  </Stack>
+                  <AuthenticatedDrawer />
+                </AppStripeProvider>
+              </AppDrawerProvider>
             </StoreProvider>
           </AuthProvider>
           <StatusBar style="auto" />

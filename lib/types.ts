@@ -141,8 +141,12 @@ export type MechanicJob = {
   mechanicStart?: LatLng;   // mechanic start location
 };
 
+export type UserDataStatus = "idle" | "loading" | "ready";
+
 export type AppState = {
   hydrated: boolean;
+  /** Supabase profile + vehicles sync state for the signed-in user. */
+  userDataStatus: UserDataStatus;
   userName: string;
   defaultLocation: string;
   userCoords: LatLng | null;

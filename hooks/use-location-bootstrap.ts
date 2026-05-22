@@ -1,10 +1,9 @@
 import { useEffect, useRef } from "react";
 import { useStore } from "@/lib/store";
-import { fetchLocationAndAddress } from "@/lib/location";
+import { detectRegionFromLocation, isLocationDetectionInFlight } from "@/lib/region-detection";
 
 /**
- * Bootstraps location once after app hydration. Subsequent re-renders won't trigger again.
- * Caller (typically the Home screen) owns the lifecycle.
+ * Home screen: fetch coords/address if auth bootstrap did not already grant location.
  */
 export function useLocationBootstrap() {
   const { state, dispatch } = useStore();
@@ -14,6 +13,7 @@ export function useLocationBootstrap() {
     if (!state.hydrated) return;
     if (requestedRef.current) return;
     if (state.locationStatus === "granted" && state.userCoords) return;
+    if (isLocationDetectionInFlight()) return;
     requestedRef.current = true;
 
     dispatch({
@@ -21,14 +21,14 @@ export function useLocationBootstrap() {
       payload: { coords: state.userCoords, status: "requesting" },
     });
 
-    fetchLocationAndAddress().then((res) => {
-      if (res.status === "granted" && res.coords) {
+    detectRegionFromLocation().then((result) => {
+      if (result?.status === "granted" && result.coords) {
         dispatch({
           type: "SET_USER_COORDS",
-          payload: { coords: res.coords, status: "granted", address: res.address },
+          payload: { coords: result.coords, status: "granted", address: result.address },
         });
-        if (res.countryCode === "MX" || res.countryCode === "US") {
-          dispatch({ type: "SET_DETECTED_COUNTRY", payload: res.countryCode });
+        if (state.regionPreference === "auto") {
+          dispatch({ type: "SET_DETECTED_COUNTRY", payload: result.countryCode });
         }
       } else {
         dispatch({
@@ -37,6 +37,5 @@ export function useLocationBootstrap() {
         });
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.hydrated]);
+  }, [state.hydrated, state.locationStatus, state.userCoords, state.regionPreference, dispatch]);
 }

@@ -1,6 +1,8 @@
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
+import { ScreenMenuHeader } from "@/components/screen-menu-header";
+import { useT } from "@/hooks/use-locale";
 import { useStore } from "@/lib/store";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { PrimaryButton } from "@/components/primary-button";
@@ -10,12 +12,13 @@ import type { Vehicle } from "@/lib/types";
 export default function VehiclesScreen() {
   const router = useRouter();
   const { state, dispatch } = useStore();
+  const t = useT();
 
   return (
-    <ScreenContainer>
+    <ScreenContainer edges={["left", "right", "bottom"]}>
+      <ScreenMenuHeader title={t("tabs.vehicles")} />
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Vehicles</Text>
           <Text style={styles.subtitle}>Add cars you want serviced</Text>
         </View>
         <Pressable
