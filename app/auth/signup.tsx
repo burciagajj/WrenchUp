@@ -1,13 +1,13 @@
 /**
- * Sign-up Screen (v1.8)
- * Fixed button response + minimal dependencies
+ * Sign-up Screen (v1.9)
+ * Clean version - no broken imports
  */
 
 import { useState } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, ActivityIndicator } from "react-native";
 import { router, Redirect } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth } from "../../../lib/auth-context";
 import { useT } from "@/hooks/use-locale";
 import * as Haptics from "expo-haptics";
 
@@ -27,28 +27,19 @@ export default function SignUpScreen() {
     return <Redirect href="/(tabs)" />;
   }
 
-  const validateForm = (): boolean => {
-    setError(null);
+  const handleSignUp = async () => {
+    console.log("🚨 SIGN UP BUTTON WAS PRESSED");
+
     if (!email.trim()) {
       setError("Email is required");
-      return false;
+      return;
     }
     if (!password || password.length < 8) {
       setError("Password must be at least 8 characters");
-      return false;
+      return;
     }
     if (password !== confirmPassword) {
       setError("Passwords do not match");
-      return false;
-    }
-    return true;
-  };
-
-  const handleSignUp = async () => {
-    console.log("✅ Sign Up button pressed"); // Debug
-
-    if (!validateForm()) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       return;
     }
 
@@ -58,21 +49,17 @@ export default function SignUpScreen() {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      console.log("Calling authSignUp with:", email, selectedRole);
-
-      const authUser = await authSignUp(email, password, selectedRole);
+      const authUser = await authSignUp(email.trim().toLowerCase(), password, selectedRole);
 
       console.log("✅ Sign up successful!", authUser.email);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // Go to profile completion
       router.replace("/auth/profile-complete");
 
     } catch (err: any) {
-      console.error("[SignUpScreen] Error:", err);
-      const message = err?.message || "Sign up failed. Please try again.";
-      setError(message);
+      console.error("❌ Sign up error:", err);
+      setError(err?.message || "Sign up failed. Please try again.");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
@@ -84,7 +71,7 @@ export default function SignUpScreen() {
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="px-6 py-8">
         <View className="mb-8">
           <Text className="text-4xl font-bold text-foreground mb-2">Create Account</Text>
-          <Text className="text-base text-muted">Join WrenchUp and get your car fixed fast</Text>
+          <Text className="text-base text-muted">Join WrenchUp today</Text>
         </View>
 
         {/* Role Selection */}
