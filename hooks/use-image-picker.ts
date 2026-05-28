@@ -110,7 +110,7 @@ export function useImagePicker() {
    */
   const pickProfileImage = useCallback((): Promise<PickedImage | null> => {
     if (Platform.OS === "web") {
-      return pickImageFromGallery();
+      return launchPicker("library", { allowsEditing: true, aspect: [1, 1], quality: 0.4 });
     }
 
     return new Promise((resolve) => {
@@ -118,15 +118,17 @@ export function useImagePicker() {
         { text: "Cancel", style: "cancel", onPress: () => resolve(null) },
         {
           text: "Take Photo",
-          onPress: async () => resolve(await pickImageFromCamera()),
+          onPress: async () =>
+            resolve(await launchPicker("camera", { allowsEditing: true, aspect: [1, 1], quality: 0.4 })),
         },
         {
           text: "Choose from Gallery",
-          onPress: async () => resolve(await pickImageFromGallery()),
+          onPress: async () =>
+            resolve(await launchPicker("library", { allowsEditing: true, aspect: [1, 1], quality: 0.4 })),
         },
       ]);
     });
-  }, [pickImageFromGallery, pickImageFromCamera]);
+  }, []);
 
   return {
     pickImage,

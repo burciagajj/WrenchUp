@@ -1,11 +1,11 @@
 import "@/global.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import { Stack, router, usePathname, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
-import { Platform } from "react-native";
+import { LogBox, Platform } from "react-native";
 import "@/lib/_core/nativewind-pressable";
 import { ThemeProvider } from "@/lib/theme-provider";
 import { StoreProvider } from "@/lib/store";
@@ -20,8 +20,9 @@ import type { EdgeInsets, Metrics, Rect } from "react-native-safe-area-context";
 
 import { trpc, createTRPCClient } from "@/lib/trpc";
 import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-runtime";
-import { AuthProvider } from "@/lib/auth-context";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { UserDataSync } from "@/components/user-data-sync";
+import { CustomerLiveJobSync } from "@/components/customer-live-job-sync";
 import { RegionBootstrap } from "@/components/region-bootstrap";
 import { AppDrawerProvider } from "@/lib/app-drawer-context";
 import { AuthenticatedDrawer } from "@/components/authenticated-drawer";
@@ -33,6 +34,35 @@ export const unstable_settings = {
   anchor: "index",
 };
 
+function RootAuthGate() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const segments = useSegments();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    const inAuthFlow = segments[0] === "auth";
+    const inLegalFlow = segments[0] === "legal";
+    const isAllowedPublicAuthScreen =
+      pathname === "/auth/signin" ||
+      pathname === "/auth/signup" ||
+      pathname === "/legal/terms" ||
+      pathname === "/legal/privacy";
+
+    if (!isAuthenticated && !isAllowedPublicAuthScreen) {
+      router.replace("/auth/signin");
+      return;
+    }
+
+    if (isAuthenticated && inAuthFlow && !inLegalFlow) {
+      router.replace("/(tabs)");
+    }
+  }, [isAuthenticated, isLoading, pathname, segments]);
+
+  return null;
+}
+
 export default function RootLayout() {
   const initialInsets = initialWindowMetrics?.insets ?? DEFAULT_WEB_INSETS;
   const initialFrame = initialWindowMetrics?.frame ?? DEFAULT_WEB_FRAME;
@@ -43,6 +73,13 @@ export default function RootLayout() {
   // Initialize Manus runtime for cookie injection from parent container
   useEffect(() => {
     initManusRuntime();
+  }, []);
+
+  // Stripe RN + Expo Go can emit a harmless warning:
+  // "No task registered for key StripeKeepJsAwakeTask"
+  // Ignore only this exact warning to keep dev logs readable.
+  useEffect(() => {
+    LogBox.ignoreLogs(["No task registered for key StripeKeepJsAwakeTask"]);
   }, []);
 
   const handleSafeAreaUpdate = useCallback((metrics: Metrics) => {
@@ -95,8 +132,10 @@ export default function RootLayout() {
           <AuthProvider>
             <StoreProvider>
               <AppDrawerProvider>
+                <RootAuthGate />
                 <RegionBootstrap />
                 <UserDataSync />
+                <CustomerLiveJobSync />
                 <AppStripeProvider>
                   <Stack screenOptions={{ headerShown: false }}>
                     <Stack.Screen name="index" />
@@ -105,16 +144,24 @@ export default function RootLayout() {
                     <Stack.Screen name="auth/signup" />
                     <Stack.Screen name="auth/signin" />
                     <Stack.Screen name="auth/profile-complete" />
+                    <Stack.Screen name="legal/terms" />
+                    <Stack.Screen name="legal/privacy" />
                     <Stack.Screen name="service-select" options={{ presentation: "modal" }} />
                     <Stack.Screen name="mechanics" />
                     <Stack.Screen name="mechanic/[id]" />
+                    <Stack.Screen name="mechanic/matched" options={{ presentation: "modal" }} />
                     <Stack.Screen name="confirm" />
+                    <Stack.Screen name="request-pending" />
+                    <Stack.Screen name="request-another-service" />
+                    <Stack.Screen name="notifications" />
                     <Stack.Screen name="tracking" />
+                    <Stack.Screen name="messages" options={{ presentation: "modal" }} />
                     <Stack.Screen name="complete" />
                     <Stack.Screen name="job/[id]" />
                     <Stack.Screen name="vehicle-form" options={{ presentation: "modal" }} />
                     <Stack.Screen name="payment-methods" options={{ presentation: "modal" }} />
                     <Stack.Screen name="mechanic/incoming" options={{ presentation: "modal" }} />
+                    <Stack.Screen name="mechanic/booked" />
                     <Stack.Screen name="mechanic/active" />
                   </Stack>
                   <AuthenticatedDrawer />

@@ -42,6 +42,9 @@ const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
   version: "1.0.0",
+  runtimeVersion: {
+    policy: "appVersion",
+  },
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,
@@ -86,6 +89,16 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-router",
+    [
+      "expo-notifications",
+      {
+        icon: "./assets/images/android-icon-monochrome.png",
+        color: "#F97316",
+        defaultChannel: "default",
+        sounds: [],
+        enableBackgroundRemoteNotifications: true,
+      },
+    ],
     [
       "expo-location",
       {
@@ -142,6 +155,13 @@ const config: ExpoConfig = {
   experiments: {
     typedRoutes: true,
     reactCompiler: true,
+  },
+  updates: {
+    enabled: true,
+    // Prevent startup failures when remote update endpoints are slow/unreachable.
+    // App launches from embedded/cached bundle first, then updates recover in background.
+    fallbackToCacheTimeout: 0,
+    checkAutomatically: "ON_ERROR_RECOVERY",
   },
 };
 

@@ -36,10 +36,15 @@ class SupabaseAuthClient {
     }
   }
 
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   private async apiCall(
     endpoint: string,
     method: "POST" | "GET" = "POST",
-    body?: Record<string, unknown>
+    body?: Record<string, unknown>,
+    attempt = 0
   ): Promise<any> {
     const url = `${this.supabaseUrl}/auth/v1${endpoint}`;
     const headers: Record<string, string> = {
@@ -60,7 +65,12 @@ class SupabaseAuthClient {
         body: body ? JSON.stringify(body) : undefined,
       });
 
-      const data = await response.json();
+      let data: any = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
 
       console.log(`[SupabaseAuth] ${method} ${endpoint} - Status: ${response.status}`);
       console.log("  Full Response:", data);
@@ -71,9 +81,25 @@ class SupabaseAuthClient {
         console.error(`[SupabaseAuth] API Error: ${errorCode}`);
         console.error("  Message:", errorMsg);
         console.error("  Full Error Object:", data);
+
+        // Backoff + retry on Supabase auth throttling
+        if (response.status === 429 && attempt < 3) {
+          const retryAfterHeader = response.headers.get("retry-after");
+          const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : NaN;
+          const base = Number.isFinite(retryAfterMs) ? retryAfterMs : 600;
+          const jitter = Math.floor(Math.random() * 250);
+          const backoffMs = base + jitter + attempt * 700;
+          console.warn(`[SupabaseAuth] Rate limited. Retrying in ${backoffMs}ms (attempt ${attempt + 1}/3)`);
+          await this.sleep(backoffMs);
+          return this.apiCall(endpoint, method, body, attempt + 1);
+        }
+
         throw {
           code: errorCode,
-          message: errorMsg,
+          message:
+            response.status === 429
+              ? "Too many authentication attempts. Please wait a moment and try again."
+              : errorMsg,
         };
       }
 

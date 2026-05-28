@@ -21,21 +21,29 @@ export function useLocationBootstrap() {
       payload: { coords: state.userCoords, status: "requesting" },
     });
 
-    detectRegionFromLocation().then((result) => {
-      if (result?.status === "granted" && result.coords) {
-        dispatch({
-          type: "SET_USER_COORDS",
-          payload: { coords: result.coords, status: "granted", address: result.address },
-        });
-        if (state.regionPreference === "auto") {
-          dispatch({ type: "SET_DETECTED_COUNTRY", payload: result.countryCode });
+    detectRegionFromLocation()
+      .then((result) => {
+        if (result?.status === "granted" && result.coords) {
+          dispatch({
+            type: "SET_USER_COORDS",
+            payload: { coords: result.coords, status: "granted", address: result.address },
+          });
+          if (state.regionPreference === "auto") {
+            dispatch({ type: "SET_DETECTED_COUNTRY", payload: result.countryCode });
+          }
+        } else {
+          dispatch({
+            type: "SET_USER_COORDS",
+            payload: { coords: state.userCoords, status: "denied" },
+          });
         }
-      } else {
+      })
+      .catch((err) => {
+        console.error("[useLocationBootstrap] Region detection failed:", err);
         dispatch({
           type: "SET_USER_COORDS",
           payload: { coords: state.userCoords, status: "denied" },
         });
-      }
-    });
+      });
   }, [state.hydrated, state.locationStatus, state.userCoords, state.regionPreference, dispatch]);
 }

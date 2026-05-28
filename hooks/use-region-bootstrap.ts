@@ -26,11 +26,20 @@ export function useRegionBootstrap(options: Options = {}) {
   // Apply device locale as soon as store is hydrated (before GPS)
   useEffect(() => {
     if (!state.hydrated) return;
-    if (state.regionPreference !== "auto") return;
     if (localeHintApplied.current) return;
 
     const hint = getDeviceRegionHint();
     localeHintApplied.current = true;
+
+    // Recovery path for stale cached US preference while device is clearly in MX.
+    if (hint === "MX" && state.regionPreference === "US") {
+      console.log("[useRegionBootstrap] Forcing auto region because device hint is MX");
+      dispatch({ type: "SET_REGION_PREFERENCE", payload: "auto" });
+      dispatch({ type: "SET_DETECTED_COUNTRY", payload: "MX" });
+      return;
+    }
+
+    if (state.regionPreference !== "auto") return;
 
     if (hint && state.detectedCountry !== hint) {
       console.log("[useRegionBootstrap] Device locale region:", hint);
@@ -42,7 +51,6 @@ export function useRegionBootstrap(options: Options = {}) {
   useEffect(() => {
     if (!state.hydrated) return;
     if (!eager) return;
-    if (state.regionPreference !== "auto") return;
     if (locationStarted.current || isLocationDetectionInFlight()) return;
     if (state.locationStatus === "granted" && state.userCoords && state.detectedCountry) {
       return;
@@ -55,34 +63,47 @@ export function useRegionBootstrap(options: Options = {}) {
       payload: { coords: state.userCoords, status: "requesting" },
     });
 
-    detectRegionFromLocation().then((result) => {
-      if (!result) {
-        dispatch({
-          type: "SET_USER_COORDS",
-          payload: { coords: state.userCoords, status: state.locationStatus === "idle" ? "denied" : state.locationStatus },
-        });
-        return;
-      }
+    detectRegionFromLocation()
+      .then((result) => {
+        if (!result) {
+          dispatch({
+            type: "SET_USER_COORDS",
+            payload: { coords: state.userCoords, status: state.locationStatus === "idle" ? "denied" : state.locationStatus },
+          });
+          return;
+        }
 
-      if (result.status === "granted" && result.coords) {
-        dispatch({
-          type: "SET_USER_COORDS",
-          payload: {
-            coords: result.coords,
-            status: "granted",
-            address: result.address,
-          },
-        });
-      } else {
+        if (result.status === "granted" && result.coords) {
+          dispatch({
+            type: "SET_USER_COORDS",
+            payload: {
+              coords: result.coords,
+              status: "granted",
+              address: result.address,
+            },
+          });
+        } else {
+          dispatch({
+            type: "SET_USER_COORDS",
+            payload: { coords: state.userCoords, status: "denied" },
+          });
+        }
+
+        console.log("[useRegionBootstrap] Location region:", result.countryCode);
+        dispatch({ type: "SET_DETECTED_COUNTRY", payload: result.countryCode });
+
+        // If GPS says Mexico, force auto region so locale/currency switch to es-MX + MXN.
+        if (result.countryCode === "MX" && state.regionPreference !== "auto") {
+          dispatch({ type: "SET_REGION_PREFERENCE", payload: "auto" });
+        }
+      })
+      .catch((err) => {
+        console.error("[useRegionBootstrap] Region detection failed:", err);
         dispatch({
           type: "SET_USER_COORDS",
           payload: { coords: state.userCoords, status: "denied" },
         });
-      }
-
-      console.log("[useRegionBootstrap] Location region:", result.countryCode);
-      dispatch({ type: "SET_DETECTED_COUNTRY", payload: result.countryCode });
-    });
+      });
   }, [
     state.hydrated,
     state.regionPreference,

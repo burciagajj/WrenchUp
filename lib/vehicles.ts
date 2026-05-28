@@ -21,7 +21,7 @@ async function getSessionTokenFromStorage(): Promise<string | null> {
 /** Check if user has vehicles */
 export async function userHasVehicles(
   userId: string,
-  sessionToken?: string
+  sessionToken?: string | null
 ): Promise<boolean> {
   if (!userId) {
     console.warn("[vehicles] No userId provided");
@@ -29,7 +29,7 @@ export async function userHasVehicles(
   }
 
   try {
-    let token = sessionToken;
+    let token: string | null = sessionToken ?? null;
 
     if (!token) {
       token = await getSessionTokenFromStorage();

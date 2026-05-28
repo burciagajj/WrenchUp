@@ -20,8 +20,13 @@ export default function MainLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
+      <Stack.Screen name="book-service" />
+      <Stack.Screen name="booked-requests" />
       <Stack.Screen name="activity" />
       <Stack.Screen name="vehicles" />
+      <Stack.Screen name="earnings" />
+      <Stack.Screen name="disputes" />
+      <Stack.Screen name="requirements" />
       <Stack.Screen name="profile" />
     </Stack>
   );

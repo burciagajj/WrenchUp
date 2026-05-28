@@ -23,6 +23,7 @@ const PERSISTABLE_KEYS: (keyof AppState)[] = [
   "activeJobId",
   "jobs",
   "role",
+  "dashboardRoleOverride",
   "mechanicOnline",
   "mechanicJobs",
   "mechanicActiveJobId",
@@ -30,6 +31,7 @@ const PERSISTABLE_KEYS: (keyof AppState)[] = [
   "regionPreference",
   "paymentMethods",
   "defaultPaymentMethodId",
+  "notificationsInbox",
 ];
 
 function pickPersistable(state: AppState): Partial<AppState> {
@@ -54,20 +56,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         if (raw) {
           const parsed = JSON.parse(raw) as Partial<AppState>;
-          // If no saved country and preference is auto, use device locale before first paint
-          if (
-            (parsed.regionPreference === "auto" || parsed.regionPreference === undefined) &&
-            !parsed.detectedCountry
-          ) {
-            const hint = getDeviceRegionHint();
-            if (hint) parsed.detectedCountry = hint;
+          // Reset legacy forced-region state and return to auto-detect.
+          parsed.regionPreference = "auto";
+          if (!parsed.detectedCountry) {
+            parsed.detectedCountry = getDeviceRegionHint();
           }
           dispatch({ type: "HYDRATE", payload: parsed });
         } else {
-          const hint = getDeviceRegionHint();
           dispatch({
             type: "HYDRATE",
-            payload: hint ? { detectedCountry: hint } : {},
+            payload: { detectedCountry: getDeviceRegionHint(), regionPreference: "auto" },
           });
         }
       } catch {

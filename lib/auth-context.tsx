@@ -23,6 +23,7 @@ import {
   updateSessionToken,
 } from "@/lib/session-tokens";
 import { ensureValidAccessToken } from "@/lib/profile-session";
+import { saveUserHistory } from "@/lib/user-history-cache";
 
 export { getSessionToken, getRefreshToken, updateSessionToken } from "@/lib/session-tokens";
 
@@ -306,10 +307,30 @@ export function useLoadUserData() {
  * Call this in profile.tsx logout handler
  */
 export function useClearUserData() {
-  const { dispatch } = useStore();
+  const { user } = useAuth();
+  const { state, dispatch } = useStore();
 
-  return useCallback(() => {
+  return useCallback(async () => {
+    if (user?.id) {
+      await saveUserHistory(user.id, {
+        jobs: state.jobs,
+        activeJobId: state.activeJobId,
+        mechanicJobs: state.mechanicJobs,
+        mechanicActiveJobId: state.mechanicActiveJobId,
+        paymentMethods: state.paymentMethods,
+        defaultPaymentMethodId: state.defaultPaymentMethodId,
+      });
+    }
     console.log("[useClearUserData] Clearing user data");
     dispatch({ type: "CLEAR_USER_DATA" });
-  }, [dispatch]);
+  }, [
+    user?.id,
+    state.jobs,
+    state.activeJobId,
+    state.mechanicJobs,
+    state.mechanicActiveJobId,
+    state.paymentMethods,
+    state.defaultPaymentMethodId,
+    dispatch,
+  ]);
 }

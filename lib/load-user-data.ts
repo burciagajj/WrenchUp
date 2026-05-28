@@ -23,8 +23,17 @@ function mapDbVehicleToApp(v: UserVehicle & { is_active?: boolean }): Vehicle {
     year: v.year,
     make: v.make,
     model: v.model,
+    trim: (v as UserVehicle & { trim?: string | null }).trim ?? undefined,
+    engineSize: (v as UserVehicle & { engine_size?: string | null }).engine_size ?? undefined,
+    transmissionType:
+      ((v as UserVehicle & { transmission_type?: Vehicle["transmissionType"] | null }).transmission_type ?? undefined),
+    drivetrain:
+      ((v as UserVehicle & { drivetrain?: Vehicle["drivetrain"] | null }).drivetrain ?? undefined),
     color: v.color || "",
     plate: v.plate || "",
+    insuranceDocUri: v.insurance_doc_url ?? null,
+    registrationStickerUri: v.registration_sticker_url ?? null,
+    approvalStatus: (v.approval_status as Vehicle["approvalStatus"]) ?? undefined,
   };
 }
 
@@ -43,14 +52,14 @@ export async function syncUserDataToStore(
   dispatch: Dispatch<Action>,
   authUser: SyncAuthUser,
   sessionToken: string
-): Promise<void> {
+): Promise<{ hasVehicleApprovalFields: boolean; vehicles: Vehicle[] }> {
   if (!authUser.id) {
     console.warn("[syncUserDataToStore] Missing user id, skipping");
-    return;
+    return { hasVehicleApprovalFields: false, vehicles: [] };
   }
   if (!sessionToken) {
     console.warn("[syncUserDataToStore] Missing session token, skipping");
-    return;
+    return { hasVehicleApprovalFields: false, vehicles: [] };
   }
 
   console.log("[syncUserDataToStore] Loading data for user:", authUser.id);
@@ -64,6 +73,11 @@ export async function syncUserDataToStore(
   );
 
   const dbVehicles = await supabaseUserData.getUserVehicles(authUser.id, freshToken);
+  const hasVehicleApprovalFields = dbVehicles.some((v) =>
+    Object.prototype.hasOwnProperty.call(v as object, "approval_status") ||
+    Object.prototype.hasOwnProperty.call(v as object, "insurance_doc_url") ||
+    Object.prototype.hasOwnProperty.call(v as object, "registration_sticker_url")
+  );
   const vehicles = dbVehicles.map(mapDbVehicleToApp);
   const selectedVehicleId = pickSelectedVehicleId(dbVehicles);
 
@@ -83,4 +97,5 @@ export async function syncUserDataToStore(
 
   console.log(`[syncUserDataToStore] Profile loaded: name="${profile.full_name ?? ""}", avatar=${photoUrl ? "yes" : "no"}`);
   console.log(`[syncUserDataToStore] Vehicles loaded: ${vehicles.length} items`);
+  return { hasVehicleApprovalFields, vehicles };
 }

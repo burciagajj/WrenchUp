@@ -4,7 +4,7 @@
  * Fix: Moved all useState hooks above early return to comply with React rules of hooks
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -13,31 +13,29 @@ import {
   ScrollView,
   ActivityIndicator,
 } from "react-native";
-import { Redirect } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
-import {
-  useAuth,
-  useLoadUserData,
-  useClearUserData,
-} from "@/lib/auth-context";
+import { useAuth } from "../../lib/auth-context";
 import { getSessionToken } from "@/lib/session-tokens";
-import { safeReplace, safePush } from "@/lib/safe-router";
+import { safeReplace } from "@/lib/safe-router";
 import { supabaseAuth } from "@/lib/_core/supabase-auth";
+import { syncUserDataToStore } from "@/lib/load-user-data";
+import { useStore } from "@/lib/store";
 import { useT } from "@/hooks/use-locale";
 import { useRegionBootstrap } from "@/hooks/use-region-bootstrap";
 import * as Haptics from "expo-haptics";
 
 export default function SignInScreen() {
+  const AUTH_COOLDOWN_SECONDS = 4;
   // ─── All hooks must come first — no early returns before this block ───
   const {
     signIn: authSignIn,
     isAuthenticated,
     isLoading: authLoading,
   } = useAuth();
-  const loadUserData = useLoadUserData();
-  const clearUserData = useClearUserData();
+  const { dispatch } = useStore();
   const t = useT();
-  useRegionBootstrap({ eager: true });
+  useRegionBootstrap({ eager: false });
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -48,7 +46,16 @@ export default function SignInScreen() {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotSuccess, setForgotSuccess] = useState(false);
+  const [cooldownLeft, setCooldownLeft] = useState(0);
   // ─────────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (cooldownLeft <= 0) return;
+    const timer = setInterval(() => {
+      setCooldownLeft((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownLeft]);
 
   // Safe to early return after all hooks have been called
   if (!authLoading && isAuthenticated) {
@@ -75,12 +82,14 @@ export default function SignInScreen() {
   };
 
   const handleSignIn = async () => {
+    if (cooldownLeft > 0 || loading) return;
     if (!validateForm()) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       return;
     }
 
     setLoading(true);
+    setCooldownLeft(AUTH_COOLDOWN_SECONDS);
     setError(null);
 
     try {
@@ -88,10 +97,11 @@ export default function SignInScreen() {
 
       const authUser = await authSignIn(email.trim().toLowerCase(), password);
 
-      clearUserData();
+      dispatch({ type: "CLEAR_USER_DATA" });
+      dispatch({ type: "SET_ROLE", payload: authUser.role });
       const sessionToken = await getSessionToken();
       if (sessionToken) {
-        await loadUserData(sessionToken, authUser);
+        await syncUserDataToStore(dispatch, authUser, sessionToken);
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -310,23 +320,23 @@ export default function SignInScreen() {
 
         <Pressable
           onPress={handleSignIn}
-          disabled={loading}
+          disabled={loading || cooldownLeft > 0}
           className={`py-4 rounded-lg flex-row items-center justify-center ${
-            loading ? "bg-primary/50" : "bg-primary"
+            loading || cooldownLeft > 0 ? "bg-primary/50" : "bg-primary"
           }`}
         >
           {loading ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
             <Text className="text-white font-bold text-lg">
-              {t("auth.signin.cta")}
+              {cooldownLeft > 0 ? `Try again in ${cooldownLeft}s` : t("auth.signin.cta")}
             </Text>
           )}
         </Pressable>
 
         <View className="mt-6 flex-row justify-center gap-2">
           <Text className="text-muted">{t("auth.signin.no_account")}</Text>
-          <Pressable onPress={() => safePush("/auth/signup")}>
+          <Pressable onPress={() => router.push("/auth/signup")}>
             <Text className="text-primary font-semibold">
               {t("auth.signin.sign_up")}
             </Text>

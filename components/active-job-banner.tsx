@@ -1,18 +1,43 @@
-import { Pressable, Text, View, StyleSheet } from "react-native";
+import { Pressable, Text, View, StyleSheet, Animated, Easing } from "react-native";
 import { useRouter } from "expo-router";
 import { useActiveJob } from "@/lib/store";
 import { getMechanic, getServiceType } from "@/lib/seed";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { haptic } from "@/lib/haptics";
+import { useEffect, useRef } from "react";
 
 export function ActiveJobBanner() {
   const job = useActiveJob();
   const router = useRouter();
+  const spin = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!job || job.status !== "in_progress") {
+      spin.stopAnimation();
+      spin.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 1000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [job, spin]);
 
   if (!job) return null;
   const mechanic = getMechanic(job.mechanicId);
   const service = getServiceType(job.service);
   if (!mechanic || !service) return null;
+
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
 
   return (
     <Pressable
@@ -23,7 +48,13 @@ export function ActiveJobBanner() {
       style={({ pressed }) => [styles.container, pressed && { opacity: 0.85 }]}
     >
       <View style={styles.iconWrap}>
-        <IconSymbol name="wrench.fill" size={20} color="#FFFFFF" />
+        {job.status === "in_progress" ? (
+          <Animated.View style={{ transform: [{ rotate }] }}>
+            <IconSymbol name="gearshape.fill" size={20} color="#FFFFFF" />
+          </Animated.View>
+        ) : (
+          <IconSymbol name="wrench.fill" size={20} color="#FFFFFF" />
+        )}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.title}>Active service • {service.name}</Text>

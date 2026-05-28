@@ -1,5 +1,6 @@
 import {
   AppState,
+  InAppNotification,
   Job,
   JobStatus,
   MechanicJob,
@@ -24,15 +25,17 @@ export const initialState: AppState = {
   activeJobId: null,
   jobs: [],
   role: "customer",
+  dashboardRoleOverride: null,
   mechanicOnline: false,
   mechanicJobs: [],
   mechanicActiveJobId: null,
-  detectedCountry: getDeviceRegionHint(),
-  regionPreference: "auto",
+  detectedCountry: "MX",
+  regionPreference: "MX",
   paymentMethods: [],
   defaultPaymentMethodId: null,
   paymentStatus: "idle",
   paymentError: null,
+  notificationsInbox: [],
 };
 
 export type Action =
@@ -46,10 +49,15 @@ export type Action =
   | { type: "SELECT_VEHICLE"; payload: string }
   | { type: "CREATE_JOB"; payload: Job }
   | { type: "UPDATE_JOB_STATUS"; payload: { id: string; status: JobStatus } }
+  | { type: "UPDATE_JOB_ASSIGNMENT"; payload: { id: string; mechanicName?: string; mechanicId?: string } }
+  | { type: "UPDATE_JOB_BOOKING_META"; payload: { id: string; isBooked?: boolean; scheduledFor?: number | null } }
+  | { type: "UPDATE_JOB_MECHANIC_COORDS"; payload: { id: string; coords: { latitude: number; longitude: number } | null } }
+  | { type: "UPDATE_JOB_MECHANIC_DONE_AT"; payload: { id: string; at: number | null } }
   | { type: "COMPLETE_JOB"; payload: { id: string; rating?: number; tip?: number; ratingComment?: string } }
   | { type: "CLEAR_ACTIVE_JOB" }
   // Mechanic mode
   | { type: "SET_ROLE"; payload: Role }
+  | { type: "SET_DASHBOARD_ROLE_OVERRIDE"; payload: Role | null }
   | { type: "SET_MECHANIC_ONLINE"; payload: boolean }
   | { type: "ADD_MECHANIC_JOB"; payload: MechanicJob }
   | { type: "UPDATE_MECHANIC_JOB_STATUS"; payload: { id: string; status: MechanicJobStatus } }
@@ -59,6 +67,20 @@ export type Action =
   | { type: "DELETE_PAYMENT_METHOD"; payload: string }
   | { type: "SET_DEFAULT_PAYMENT_METHOD"; payload: string | null }
   | { type: "SET_PAYMENT_STATUS"; payload: { status: AppState["paymentStatus"]; error?: string } }
+  | { type: "ADD_INBOX_NOTIFICATION"; payload: InAppNotification }
+  | { type: "MARK_INBOX_READ"; payload?: { id?: string } }
+  | { type: "CLEAR_INBOX" }
+  | {
+      type: "LOAD_USER_HISTORY";
+      payload: {
+        jobs: Job[];
+        activeJobId: string | null;
+        mechanicJobs: MechanicJob[];
+        mechanicActiveJobId: string | null;
+        paymentMethods: PaymentMethod[];
+        defaultPaymentMethodId: string | null;
+      };
+    }
   // v1.6: User data isolation
   | {
       type: "LOAD_USER_DATA";
@@ -72,12 +94,39 @@ export type Action =
   | { type: "CLEAR_USER_DATA" }
   // v1.8: Photo upload
   | { type: "SET_PHOTO_URL"; payload: string }
-  | { type: "SET_USER_DATA_STATUS"; payload: AppState["userDataStatus"] };
+  | { type: "SET_USER_DATA_STATUS"; payload: AppState["userDataStatus"] }
+  | {
+      type: "MERGE_VEHICLE_APPROVALS";
+      payload: Record<
+        string,
+        {
+          insuranceDocUri?: string | null;
+          registrationStickerUri?: string | null;
+          approvalStatus?: "pending" | "approved" | "rejected";
+        }
+      >;
+    };
 
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "HYDRATE":
-      return { ...state, ...action.payload, hydrated: true };
+      return {
+        ...state,
+        ...action.payload,
+        mechanicJobs: Array.isArray(action.payload.mechanicJobs)
+          ? action.payload.mechanicJobs.filter(
+              (job, idx, arr) =>
+                arr.findIndex(
+                  (j) =>
+                    j.id === job.id ||
+                    (j.remoteRequestId &&
+                      job.remoteRequestId &&
+                      j.remoteRequestId === job.remoteRequestId),
+                ) === idx,
+            )
+          : state.mechanicJobs,
+        hydrated: true,
+      };
     case "SET_USER_NAME":
       return { ...state, userName: action.payload };
     case "SET_DEFAULT_LOCATION":
@@ -127,6 +176,45 @@ export function reducer(state: AppState, action: Action): AppState {
           : state.activeJobId;
       return { ...state, jobs, activeJobId };
     }
+    case "UPDATE_JOB_ASSIGNMENT": {
+      const jobs = state.jobs.map((j) =>
+        j.id === action.payload.id
+          ? {
+              ...j,
+              mechanicName: action.payload.mechanicName ?? j.mechanicName,
+              mechanicId: action.payload.mechanicId ?? j.mechanicId,
+            }
+          : j,
+      );
+      return { ...state, jobs };
+    }
+    case "UPDATE_JOB_BOOKING_META": {
+      const jobs = state.jobs.map((j) =>
+        j.id === action.payload.id
+          ? {
+              ...j,
+              isBooked: action.payload.isBooked ?? j.isBooked,
+              scheduledFor:
+                action.payload.scheduledFor !== undefined
+                  ? action.payload.scheduledFor
+                  : j.scheduledFor,
+            }
+          : j,
+      );
+      return { ...state, jobs };
+    }
+    case "UPDATE_JOB_MECHANIC_COORDS": {
+      const jobs = state.jobs.map((j) =>
+        j.id === action.payload.id ? { ...j, mechanicLiveCoords: action.payload.coords } : j,
+      );
+      return { ...state, jobs };
+    }
+    case "UPDATE_JOB_MECHANIC_DONE_AT": {
+      const jobs = state.jobs.map((j) =>
+        j.id === action.payload.id ? { ...j, mechanicMarkedDoneAt: action.payload.at ?? undefined } : j,
+      );
+      return { ...state, jobs };
+    }
     case "COMPLETE_JOB": {
       const jobs = state.jobs.map((j) =>
         j.id === action.payload.id
@@ -148,6 +236,8 @@ export function reducer(state: AppState, action: Action): AppState {
     // ── Mechanic mode ────────────────────────────────────────────
     case "SET_ROLE":
       return { ...state, role: action.payload };
+    case "SET_DASHBOARD_ROLE_OVERRIDE":
+      return { ...state, dashboardRoleOverride: action.payload };
     case "SET_MECHANIC_ONLINE":
       return { ...state, mechanicOnline: action.payload };
     case "SET_DETECTED_COUNTRY":
@@ -155,6 +245,17 @@ export function reducer(state: AppState, action: Action): AppState {
     case "SET_REGION_PREFERENCE":
       return { ...state, regionPreference: action.payload };
     case "ADD_MECHANIC_JOB":
+      if (
+        state.mechanicJobs.some(
+          (j) =>
+            j.id === action.payload.id ||
+            (j.remoteRequestId &&
+              action.payload.remoteRequestId &&
+              j.remoteRequestId === action.payload.remoteRequestId),
+        )
+      ) {
+        return state;
+      }
       return {
         ...state,
         mechanicJobs: [action.payload, ...state.mechanicJobs],
@@ -162,17 +263,26 @@ export function reducer(state: AppState, action: Action): AppState {
     case "UPDATE_MECHANIC_JOB_STATUS": {
       const mechanicJobs = state.mechanicJobs.map((j) => {
         if (j.id !== action.payload.id) return j;
-        const next: MechanicJob = { ...j, status: action.payload.status };
-        if (action.payload.status === "heading_there" && !j.acceptedAt) next.acceptedAt = Date.now();
-        if (action.payload.status === "completed" && !j.completedAt) next.completedAt = Date.now();
+        let nextStatus = action.payload.status;
+        // Guard: booked jobs should not enter live-trip flow before scheduled time.
+        const isFutureBooked =
+          !!j.isBooked &&
+          (typeof j.scheduledFor !== "number" || j.scheduledFor > Date.now());
+        if (action.payload.status === "heading_there" && isFutureBooked) {
+          nextStatus = "upcoming";
+        }
+        const next: MechanicJob = { ...j, status: nextStatus };
+        if (nextStatus === "heading_there" && !j.acceptedAt) next.acceptedAt = Date.now();
+        if (nextStatus === "completed" && !j.completedAt) next.completedAt = Date.now();
         return next;
       });
       let mechanicActiveJobId = state.mechanicActiveJobId;
-      const status = action.payload.status;
-      if (status === "heading_there") {
+      const updated = mechanicJobs.find((j) => j.id === action.payload.id);
+      const effectiveStatus = updated?.status ?? action.payload.status;
+      if (effectiveStatus === "heading_there") {
         mechanicActiveJobId = action.payload.id;
       } else if (
-        (status === "completed" || status === "declined" || status === "cancelled") &&
+        (effectiveStatus === "completed" || effectiveStatus === "declined" || effectiveStatus === "cancelled" || effectiveStatus === "upcoming") &&
         state.mechanicActiveJobId === action.payload.id
       ) {
         mechanicActiveJobId = null;
@@ -202,6 +312,50 @@ export function reducer(state: AppState, action: Action): AppState {
         paymentStatus: action.payload.status,
         paymentError: action.payload.error || null,
       };
+    case "ADD_INBOX_NOTIFICATION": {
+      const next = [action.payload, ...state.notificationsInbox]
+        .filter((n, idx, arr) => arr.findIndex((x) => x.id === n.id) === idx)
+        .slice(0, 120);
+      return { ...state, notificationsInbox: next };
+    }
+    case "MARK_INBOX_READ": {
+      if (!action.payload?.id) {
+        const now = Date.now();
+        return {
+          ...state,
+          notificationsInbox: state.notificationsInbox.map((n) => (n.readAt ? n : { ...n, readAt: now })),
+        };
+      }
+      return {
+        ...state,
+        notificationsInbox: state.notificationsInbox.map((n) =>
+          n.id === action.payload?.id && !n.readAt ? { ...n, readAt: Date.now() } : n,
+        ),
+      };
+    }
+    case "CLEAR_INBOX":
+      return { ...state, notificationsInbox: [] };
+    case "LOAD_USER_HISTORY":
+      {
+        const mergedPaymentMethods =
+          action.payload.paymentMethods.length > 0
+            ? action.payload.paymentMethods
+            : state.paymentMethods;
+        const mergedDefaultPaymentMethodId =
+          action.payload.defaultPaymentMethodId ??
+          state.defaultPaymentMethodId ??
+          mergedPaymentMethods[0]?.id ??
+          null;
+      return {
+        ...state,
+        jobs: action.payload.jobs,
+        activeJobId: action.payload.activeJobId,
+        mechanicJobs: action.payload.mechanicJobs,
+        mechanicActiveJobId: action.payload.mechanicActiveJobId,
+        paymentMethods: mergedPaymentMethods,
+        defaultPaymentMethodId: mergedDefaultPaymentMethodId,
+      };
+      }
 
     // v1.6: User data isolation
     // Replace profile + vehicles + avatar from Supabase (after login, restore, or profile-complete)
@@ -224,6 +378,9 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         userDataStatus: "idle",
+        role: "customer",
+        dashboardRoleOverride: null,
+        mechanicOnline: false,
         userName: DEFAULT_USER_NAME,
         vehicles: [],
         selectedVehicleId: null,
@@ -234,10 +391,19 @@ export function reducer(state: AppState, action: Action): AppState {
         mechanicActiveJobId: null,
         paymentMethods: [],
         defaultPaymentMethodId: null,
+        notificationsInbox: [],
       };
 
     case "SET_PHOTO_URL":
       return { ...state, photoUrl: action.payload };
+    case "MERGE_VEHICLE_APPROVALS":
+      return {
+        ...state,
+        vehicles: state.vehicles.map((v) => {
+          const patch = action.payload[v.id];
+          return patch ? { ...v, ...patch } : v;
+        }),
+      };
 
     default:
       return state;

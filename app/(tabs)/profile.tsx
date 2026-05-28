@@ -1,559 +1,541 @@
-/**
- * Profile Screen (v1.5)
- * Personal info, vehicle management, and logout
- */
-
-import { useRouter, useFocusEffect } from "expo-router";
-import { safeReplace } from "@/lib/safe-router";
-import { useState, useEffect, useCallback } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useMemo, useState } from "react";
+import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
 import { ScreenMenuHeader } from "@/components/screen-menu-header";
-import { useStore } from "@/lib/store";
-import { useAuth, useClearUserData, useLoadUserData } from "@/lib/auth-context";
-import { useT } from "@/hooks/use-locale";
-import { useColors } from "@/hooks/use-colors";
-import { supabaseUserData } from "@/lib/_core/supabase-user-data";
-import { saveProfileAvatar } from "@/lib/profile-avatar";
-import { resolveAuthSession } from "@/lib/resolve-auth-session";
-import { useImagePicker } from "@/hooks/use-image-picker";
 import { Avatar } from "@/components/avatar";
-import { getSessionToken } from "@/lib/auth-context";
-import {
-  ScrollView,
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  ActivityIndicator,
-  Alert,
-} from "react-native";
-import * as Haptics from "expo-haptics";
+import { IconSymbol } from "@/components/ui/icon-symbol";
+import { useAuth, useLoadUserData } from "@/lib/auth-context";
+import { useStore } from "@/lib/store";
+import { useImagePicker } from "@/hooks/use-image-picker";
+import { resolveAuthSession } from "@/lib/resolve-auth-session";
+import { saveProfileAvatar } from "@/lib/profile-avatar";
+import { useLocaleContext, useT } from "@/hooks/use-locale";
+import { haptic } from "@/lib/haptics";
+import { supabaseUserData } from "@/lib/_core/supabase-user-data";
+import { computeMechanicMetrics } from "@/lib/mechanic-metrics";
+
+type ProfileTabKey = "profile" | "cards" | "settings";
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { state, dispatch } = useStore();
-  const { user, signOut, isLoading: isAuthLoading } = useAuth();
-  const loadUserData = useLoadUserData();
   const t = useT();
-  const colors = useColors();
-
-  // Personal info state
-  const [editingName, setEditingName] = useState(false);
-  const [name, setName] = useState(state.userName || "");
-  const [email, setEmail] = useState("");
-  const [editingPassword, setEditingPassword] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-
-  // Vehicle state
-  const [editingVehicle, setEditingVehicle] = useState(false);
-  const [selectedVehicleId, setSelectedVehicleId] = useState(state.selectedVehicleId);
-
-  // Photo upload state
-  const [photoUrl, setPhotoUrl] = useState(state.photoUrl || "");
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const { locale } = useLocaleContext();
+  const { user, resetPassword } = useAuth();
+  const loadUserData = useLoadUserData();
+  const { state, dispatch } = useStore();
   const { pickProfileImage } = useImagePicker();
 
-  // Loading state
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const profileSyncing = state.userDataStatus === "loading";
+  const [activeTab, setActiveTab] = useState<ProfileTabKey>("profile");
+  const [editingName, setEditingName] = useState(state.userName);
+  const [editingBio, setEditingBio] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const role = user?.role ?? state.role;
+  const isEs = locale === "es-MX";
+  const L = (en: string, es: string) => (isEs ? es : en);
+  const memberMonths = useMemo(() => {
+    const first = [...state.jobs, ...state.mechanicJobs]
+      .map((j) => ("createdAt" in j ? j.createdAt : j.receivedAt))
+      .filter(Boolean)
+      .sort((a, b) => a - b)[0];
+    if (!first) return 0;
+    const diffMs = Date.now() - first;
+    return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24 * 30.4)));
+  }, [state.jobs, state.mechanicJobs]);
 
-  // Sync email when user changes
-  useEffect(() => {
-    if (user?.email) {
-      setEmail(user.email);
-      console.log("[ProfileScreen] Email synced:", user.email);
-    }
-  }, [user]);
+  const ratingValue = useMemo(() => {
+    if (role === "mechanic") return "4.9 ★";
+    const ratedJobs = state.jobs.filter((j) => typeof j.rating === "number");
+    if (ratedJobs.length === 0) return L("No ratings yet", "Sin calificaciones");
+    const average = ratedJobs.reduce((sum, j) => sum + (j.rating ?? 0), 0) / ratedJobs.length;
+    return `${average.toFixed(1)} ★`;
+  }, [role, state.jobs, locale]);
+  const mechanicMetrics = useMemo(() => computeMechanicMetrics(state.mechanicJobs), [state.mechanicJobs]);
 
-  // Refresh profile + vehicles when the tab is focused (uses in-memory token first)
-  useFocusEffect(
-    useCallback(() => {
-      if (!user?.id) return;
-
-      let cancelled = false;
-      (async () => {
-        try {
-          const token = await getSessionToken();
-          if (cancelled || !token) return;
-          setSessionToken(token);
-          await loadUserData(token, user);
-        } catch (err) {
-          console.error("[ProfileScreen] Failed to refresh profile:", err);
-        }
-      })();
-
-      return () => {
-        cancelled = true;
-      };
-    }, [user?.id, loadUserData, user])
-  );
-
-  // Keep local UI in sync with store after LOAD_USER_DATA
-  useEffect(() => {
-    setSelectedVehicleId(state.selectedVehicleId);
-  }, [state.selectedVehicleId]);
-
-  useEffect(() => {
-    setName(state.userName || "");
-  }, [state.userName]);
-
-  // Sync avatar from store after LOAD_USER_DATA (logout → login persistence)
-  useEffect(() => {
-    setPhotoUrl(state.photoUrl || "");
-    console.log("[ProfileScreen] Avatar synced from store:", state.photoUrl ? "yes" : "no");
-  }, [state.photoUrl]);
-
-  // Handle photo upload — camera/gallery → Storage → avatar_url → reload store
-  const handlePhotoUpload = async () => {
-    if (!user?.id) {
-      setError("Not authenticated. Please log in again.");
-      return;
-    }
-
+  const handleAvatarEdit = async () => {
+    if (!user?.id) return;
     try {
-      setUploadingPhoto(true);
-      setError(null);
-
       const image = await pickProfileImage();
-      if (!image) {
-        return;
-      }
+      if (!image) return;
+      const resolved = await resolveAuthSession(user, (err) => {
+        Alert.alert(L("Could not update avatar", "No se pudo actualizar la foto"), err.message);
+      });
+      if (!resolved) return;
 
-      const resolved = await resolveAuthSession(user, (err) => setError(err.message));
-      if (!resolved) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        return;
-      }
-      const { sessionToken: token } = resolved;
-      setSessionToken(token);
-
-      console.log("[ProfileScreen] Uploading profile photo...", { size: image.base64.length });
-      const publicUrl = await saveProfileAvatar(user.id, image, token);
-
-      setPhotoUrl(publicUrl);
+      const publicUrl = await saveProfileAvatar(user.id, image, resolved.sessionToken);
       dispatch({ type: "SET_PHOTO_URL", payload: publicUrl });
-
-      await loadUserData(token, user);
-      console.log("[ProfileScreen] Profile photo saved and store refreshed");
-
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (err: any) {
-      console.error("[ProfileScreen] Photo upload failed:", err);
-      setError(err?.message || "Failed to upload photo");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setUploadingPhoto(false);
+      await loadUserData(resolved.sessionToken, user);
+      haptic.success();
+    } catch (err) {
+      console.error("[Profile] Avatar update failed:", err);
+      haptic.error();
+      const msg = err instanceof Error ? err.message : L("Please try again.", "Inténtalo de nuevo.");
+      Alert.alert(L("Could not update avatar", "No se pudo actualizar la foto"), msg);
     }
   };
 
-  // Stats
-  const completedCount = state.jobs.filter((j) => j.status === "completed").length;
-  const totalSpent = state.jobs
-    .filter((j) => j.status === "completed")
-    .reduce((sum, j) => sum + j.fare.total + (j.tip ?? 0), 0);
-
-  const selectedVehicle = state.vehicles.find((v) => v.id === selectedVehicleId);
-
-  // Persist full_name to Supabase (same session refresh pattern as vehicles)
-  const handleSaveName = async () => {
-    if (!name.trim()) {
-      setError("Name cannot be empty");
+  const handleSaveProfile = async () => {
+    if (!user?.id) return;
+    const name = editingName.trim();
+    if (!name) {
+      haptic.error();
+      Alert.alert(L("Name required", "Nombre requerido"), L("Please add a name.", "Agrega un nombre."));
       return;
     }
 
-    if (!user?.id) {
-      setError("Not authenticated. Please log in again.");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
+    setSavingProfile(true);
     try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const resolved = await resolveAuthSession(user, (err) => {
+        Alert.alert(L("Could not save profile", "No se pudo guardar el perfil"), err.message);
+      });
+      if (!resolved) return;
 
-      const resolved = await resolveAuthSession(user, (err) => setError(err.message));
-      if (!resolved) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        return;
-      }
-      const { sessionToken: token } = resolved;
-      setSessionToken(token);
-
-      console.log("[ProfileScreen] Saving full_name to Supabase:", name.trim());
       await supabaseUserData.updateProfile(
         user.id,
-        { full_name: name.trim(), email: user.email },
-        token,
+        { full_name: name, bio: editingBio.trim() || null },
+        resolved.sessionToken,
         user.email
       );
-
-      dispatch({ type: "SET_USER_NAME", payload: name.trim() });
-      await loadUserData(token, user);
-
-      setEditingName(false);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (err: any) {
-      console.error("[ProfileScreen] Name save failed:", err);
-      setError(err?.message || "Failed to save name");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      await loadUserData(resolved.sessionToken, user);
+      dispatch({ type: "SET_USER_NAME", payload: name });
+      haptic.success();
+      Alert.alert(L("Saved", "Guardado"), L("Your profile was updated.", "Tu perfil se actualizó."));
+    } catch (err) {
+      console.error("[Profile] Save failed:", err);
+      haptic.error();
+      Alert.alert(L("Could not save profile", "No se pudo guardar el perfil"), L("Please try again.", "Inténtalo de nuevo."));
     } finally {
-      setLoading(false);
+      setSavingProfile(false);
     }
-  };
-
-  const handleChangePassword = async () => {
-    setError(null);
-
-    if (!currentPassword.trim()) {
-      setError("Current password is required");
-      return;
-    }
-    if (!newPassword.trim() || newPassword.length < 8) {
-      setError("New password must be at least 8 characters");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-      if (!user || !user.id) {
-        console.error("[ProfileScreen] Not authenticated:", { user });
-        setError("Not authenticated. Please log in again.");
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        setLoading(false);
-        return;
-      }
-
-      let token = sessionToken ?? (await getSessionToken());
-
-      if (!token) {
-        console.error("[ProfileScreen] No session token available");
-        setError("Session expired. Please log in again.");
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        setLoading(false);
-        return;
-      }
-
-      console.log("[ProfileScreen] Changing password for user:", user.id);
-      // Change password via Supabase
-      await supabaseUserData.changePassword(newPassword, token);
-
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      setEditingPassword(false);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Success", "Password changed successfully");
-    } catch (err: any) {
-      const errorMsg = err?.message || "Failed to change password";
-      setError(errorMsg);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSelectVehicle = (vehicleId: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    dispatch({ type: "SELECT_VEHICLE", payload: vehicleId });
-    setSelectedVehicleId(vehicleId);
-  };
-
-  const handleAddVehicle = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push("/vehicle-form");
-  };
-
-  const clearUserData = useClearUserData();
-
-  const handleLogout = async () => {
-    Alert.alert("Log Out", "Are you sure you want to log out?", [
-      { text: "Cancel", onPress: () => {} },
-      {
-        text: "Log Out",
-        onPress: async () => {
-          setLoading(true);
-          try {
-            clearUserData();
-            await signOut();
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            safeReplace("/auth/signin");
-          } catch (err) {
-            setError("Failed to log out");
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-          } finally {
-            setLoading(false);
-          }
-        },
-        style: "destructive",
-      },
-    ]);
   };
 
   return (
-    <ScreenContainer className="bg-background" edges={["left", "right", "bottom"]}>
+    <ScreenContainer edges={["left", "right", "bottom"]}>
       <ScreenMenuHeader title={t("tabs.profile")} />
-      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 32, paddingHorizontal: 20 }} showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View className="mb-8 mt-4">
-          <Text className="text-2xl font-bold text-foreground">Profile</Text>
-          {isAuthLoading || profileSyncing ? (
-            <View className="flex-row items-center gap-2 mt-2">
-              <ActivityIndicator size="small" color={colors.primary} />
-              <Text className="text-base text-muted">Loading profile…</Text>
-            </View>
-          ) : user?.email ? (
-            <Text className="text-base text-muted mt-2">{user.email}</Text>
-          ) : (
-            <Text className="text-base text-error mt-2">Not authenticated</Text>
-          )}
-        </View>
-
-        {/* Photo Section */}
-        <View className="mb-8 items-center">
-          <Pressable onPress={handlePhotoUpload} disabled={uploadingPhoto}>
-            <View className="relative">
-              <Avatar name={name} url={photoUrl} size={120} />
-              {uploadingPhoto && (
-                <View className="absolute inset-0 bg-black/40 rounded-full items-center justify-center">
-                  <ActivityIndicator color="#fff" size="large" />
-                </View>
-              )}
-            </View>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <Pressable onPress={handleAvatarEdit} hitSlop={8}>
+            <Avatar name={state.userName} size={92} url={state.photoUrl ?? undefined} />
           </Pressable>
-          <Text className="text-sm text-muted mt-3">Tap to change — camera or gallery</Text>
-        </View>
-
-        {/* Error Message */}
-        {error && (
-          <View className="bg-error/10 border border-error rounded-lg p-4 mb-6">
-            <Text className="text-error text-sm">{error}</Text>
-          </View>
-        )}
-
-        {/* Personal Information Section */}
-        <View className="mb-8">
-          <Text className="text-lg font-semibold text-foreground mb-4">Personal Information</Text>
-
-          {/* Name */}
-          <View className="bg-surface rounded-lg p-4 mb-4 border border-border">
-            <Text className="text-sm text-muted mb-2">Name</Text>
-            {editingName ? (
-              <View className="gap-3">
-                <TextInput
-                  className="bg-background border border-border rounded-lg px-4 py-3 text-foreground"
-                  placeholder="Enter your name"
-                  placeholderTextColor={colors.muted}
-                  value={name}
-                  onChangeText={setName}
-                  editable={!loading}
-                />
-                <View className="flex-row gap-2">
-                  <Pressable
-                    className="flex-1 bg-primary rounded-lg py-3 items-center"
-                    onPress={handleSaveName}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text className="text-white font-semibold">Save</Text>
-                    )}
-                  </Pressable>
-                  <Pressable
-                    className="flex-1 bg-border rounded-lg py-3 items-center"
-                    onPress={() => {
-                      setEditingName(false);
-                      setName(state.userName || "");
-                    }}
-                    disabled={loading}
-                  >
-                    <Text className="text-foreground font-semibold">Cancel</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : (
-              <Pressable
-                className="flex-row justify-between items-center"
-                onPress={() => setEditingName(true)}
-              >
-                <Text className="text-foreground text-base">
-                  {profileSyncing && !name ? "Loading…" : name || "Not set"}
-                </Text>
-                <Text className="text-primary">Edit</Text>
-              </Pressable>
-            )}
-          </View>
-
-          {/* Email */}
-          <View className="bg-surface rounded-lg p-4 mb-4 border border-border">
-            <Text className="text-sm text-muted mb-2">Email</Text>
-            <Text className="text-foreground text-base">{email}</Text>
-            <Text className="text-xs text-muted mt-2">Email cannot be changed</Text>
-          </View>
-
-          {/* Password */}
-          <View className="bg-surface rounded-lg p-4 border border-border">
-            <Text className="text-sm text-muted mb-2">Password</Text>
-            {editingPassword ? (
-              <View className="gap-3">
-                <TextInput
-                  className="bg-background border border-border rounded-lg px-4 py-3 text-foreground"
-                  placeholder="Current password"
-                  placeholderTextColor={colors.muted}
-                  secureTextEntry
-                  value={currentPassword}
-                  onChangeText={setCurrentPassword}
-                  editable={!loading}
-                />
-                <TextInput
-                  className="bg-background border border-border rounded-lg px-4 py-3 text-foreground"
-                  placeholder="New password (min 8 chars)"
-                  placeholderTextColor={colors.muted}
-                  secureTextEntry
-                  value={newPassword}
-                  onChangeText={setNewPassword}
-                  editable={!loading}
-                />
-                <TextInput
-                  className="bg-background border border-border rounded-lg px-4 py-3 text-foreground"
-                  placeholder="Confirm new password"
-                  placeholderTextColor={colors.muted}
-                  secureTextEntry
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  editable={!loading}
-                />
-                <View className="flex-row gap-2">
-                  <Pressable
-                    className="flex-1 bg-primary rounded-lg py-3 items-center"
-                    onPress={handleChangePassword}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text className="text-white font-semibold">Save</Text>
-                    )}
-                  </Pressable>
-                  <Pressable
-                    className="flex-1 bg-border rounded-lg py-3 items-center"
-                    onPress={() => {
-                      setEditingPassword(false);
-                      setCurrentPassword("");
-                      setNewPassword("");
-                      setConfirmPassword("");
-                    }}
-                    disabled={loading}
-                  >
-                    <Text className="text-foreground font-semibold">Cancel</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : (
-              <Pressable
-                className="flex-row justify-between items-center"
-                onPress={() => setEditingPassword(true)}
-              >
-                <Text className="text-foreground text-base">••••••••</Text>
-                <Text className="text-primary">Change</Text>
-              </Pressable>
-            )}
+          <View style={{ flex: 1 }}>
+            <Text style={styles.name}>{state.userName}</Text>
+            <View style={styles.roleChip}>
+              <Text style={styles.roleChipText}>
+                {role === "mechanic" ? L("Mechanic", "Mecánico") : L("Customer", "Cliente")}
+              </Text>
+            </View>
+            <Text style={styles.tagline}>
+              {role === "mechanic"
+                ? L("Helping nearby drivers get back on the road.", "Ayudando a conductores cercanos a volver al camino.")
+                : L("Ready whenever your car needs help.", "Listo cuando tu auto necesite ayuda.")}
+            </Text>
           </View>
         </View>
 
-        {/* Vehicles Section */}
-        <View className="mb-8">
-          <View className="flex-row justify-between items-center mb-4">
-            <Text className="text-lg font-semibold text-foreground">Vehicles</Text>
-            <Pressable onPress={handleAddVehicle} className="bg-primary rounded-lg px-4 py-2">
-              <Text className="text-white font-semibold text-sm">Add Vehicle</Text>
+        <View style={styles.tabBar}>
+          <TabButton label={L("Profile", "Perfil")} active={activeTab === "profile"} onPress={() => setActiveTab("profile")} />
+          <TabButton label={L("Cards", "Tarjetas")} active={activeTab === "cards"} onPress={() => setActiveTab("cards")} />
+          <TabButton label={L("Settings", "Ajustes")} active={activeTab === "settings"} onPress={() => setActiveTab("settings")} />
+        </View>
+
+        {activeTab === "profile" ? (
+          <Section title={L("Profile", "Perfil")}>
+            <StatRow label={L("Ratings", "Calificación")} value={ratingValue} />
+            <StatRow label={L("Member for", "Miembro por")} value={`${memberMonths} ${L("month", "mes")}${memberMonths === 1 ? "" : L("s", "es")}`} />
+            {role === "mechanic" ? (
+              <>
+                <StatRow label={L("Acceptance Rate", "Tasa de aceptación")} value={`${mechanicMetrics.acceptanceRate}%`} />
+                <StatRow label={L("Cancellation Rate", "Tasa de cancelación")} value={`${mechanicMetrics.cancellationRate}%`} />
+                <StatRow label={L("Completion Rate", "Tasa de finalización")} value={`${mechanicMetrics.completionRate}%`} />
+              </>
+            ) : null}
+            <View style={styles.rowBtn}>
+              <Text style={styles.rowBtnText}>{L("Email", "Correo")}</Text>
+              <Text style={styles.readonlyValue}>{user?.email ?? "—"}</Text>
+            </View>
+            <View style={styles.rowBtn}>
+              <Text style={styles.rowBtnText}>{L("Name", "Nombre")}</Text>
+              <Text style={styles.readonlyValue}>{state.userName}</Text>
+            </View>
+            <Pressable
+              onPress={async () => {
+                if (!user?.email) return;
+                try {
+                  await resetPassword(user.email);
+                  haptic.success();
+                  Alert.alert(L("Password reset", "Restablecer contraseña"), L("Check your email for the reset link.", "Revisa tu correo para el enlace."));
+                } catch (err) {
+                  console.error("[Profile] Reset password failed:", err);
+                  haptic.error();
+                  Alert.alert(L("Could not reset password", "No se pudo restablecer contraseña"), L("Please try again.", "Inténtalo de nuevo."));
+                }
+              }}
+              style={styles.rowBtn}
+            >
+              <Text style={styles.rowBtnText}>{L("Change Password", "Cambiar contraseña")}</Text>
+              <IconSymbol name="chevron.right" size={16} color="#64748B" />
             </Pressable>
-          </View>
+            <View style={styles.formArea}>
+              <Text style={styles.label}>{L("Display Name", "Nombre visible")}</Text>
+              <TextInput
+                value={editingName}
+                onChangeText={setEditingName}
+                style={styles.input}
+                placeholder={L("Your name", "Tu nombre")}
+                placeholderTextColor="#94A3B8"
+              />
+              <Text style={styles.label}>{L("Bio", "Biografía")}</Text>
+              <TextInput
+                value={editingBio}
+                onChangeText={setEditingBio}
+                style={[styles.input, styles.inputBio]}
+                multiline
+                placeholder={role === "mechanic" ? L("Tell customers about your experience", "Cuéntale a clientes tu experiencia") : L("A short profile bio", "Biografía corta")}
+                placeholderTextColor="#94A3B8"
+              />
+              <Pressable onPress={handleSaveProfile} style={styles.primaryRowBtn} disabled={savingProfile}>
+                <Text style={styles.primaryRowBtnText}>{savingProfile ? L("Saving...", "Guardando...") : L("Save Profile", "Guardar perfil")}</Text>
+              </Pressable>
+            </View>
+          </Section>
+        ) : null}
 
-          {profileSyncing && state.vehicles.length === 0 ? (
-            <View className="bg-surface rounded-lg p-6 items-center border border-border">
-              <ActivityIndicator color={colors.primary} />
-              <Text className="text-muted text-center mt-3">Loading vehicles…</Text>
-            </View>
-          ) : state.vehicles.length === 0 ? (
-            <View className="bg-surface rounded-lg p-6 items-center border border-border">
-              <Text className="text-muted text-center">No vehicles added yet</Text>
-              <Text className="text-muted text-sm mt-2">Add your first vehicle to get started</Text>
-            </View>
-          ) : (
-            <View className="gap-3">
-              {state.vehicles.map((vehicle) => (
-                <Pressable
-                  key={vehicle.id}
-                  onPress={() => handleSelectVehicle(vehicle.id)}
-                  className={`rounded-lg p-4 border ${
-                    selectedVehicleId === vehicle.id
-                      ? "bg-primary/10 border-primary"
-                      : "bg-surface border-border"
-                  }`}
-                >
-                  <View className="flex-row justify-between items-start">
-                    <View className="flex-1">
-                      <Text className="text-foreground font-semibold">{vehicle.nickname}</Text>
-                      <Text className="text-muted text-sm">
-                        {vehicle.year} {vehicle.make} {vehicle.model}
+        {activeTab === "cards" ? (
+          <Section title={L("Payment Cards", "Tarjetas de pago")}>
+            {state.paymentMethods.length === 0 ? (
+              <Text style={styles.emptyText}>{L("No cards saved yet.", "Aún no hay tarjetas guardadas.")}</Text>
+            ) : (
+              state.paymentMethods.map((pm) => {
+                const isDefault = state.defaultPaymentMethodId === pm.id;
+                return (
+                  <View key={pm.id} style={styles.vehicleRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.vehicleTitle}>
+                        {pm.card.brand.toUpperCase()} •••• {pm.card.last4}
                       </Text>
-                      {vehicle.color && (
-                        <Text className="text-muted text-sm mt-1">Color: {vehicle.color}</Text>
-                      )}
+                      <Text style={styles.vehicleMeta}>
+                        {L("Expires", "Vence")} {pm.card.expMonth}/{pm.card.expYear}
+                      </Text>
                     </View>
-                    {selectedVehicleId === vehicle.id && (
-                      <View className="bg-primary rounded-full w-6 h-6 items-center justify-center">
-                        <Text className="text-white text-sm">✓</Text>
-                      </View>
-                    )}
+                    <Pressable
+                      onPress={() => dispatch({ type: "SET_DEFAULT_PAYMENT_METHOD", payload: pm.id })}
+                      style={[styles.activeBtn, isDefault && styles.activeBtnOn]}
+                    >
+                      <Text style={[styles.activeBtnText, isDefault && styles.activeBtnTextOn]}>
+                        {isDefault ? L("Default", "Predeterminada") : L("Set Default", "Predeterminada")}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => dispatch({ type: "DELETE_PAYMENT_METHOD", payload: pm.id })}
+                      style={styles.deleteBtn}
+                    >
+                      <IconSymbol name="trash" size={14} color="#B91C1C" />
+                    </Pressable>
                   </View>
-                </Pressable>
-              ))}
-            </View>
-          )}
+                );
+              })
+            )}
+            <Pressable onPress={() => router.push("/payment-methods" as any)} style={styles.primaryRowBtn}>
+              <IconSymbol name="creditcard.fill" size={16} color="#FFFFFF" />
+              <Text style={styles.primaryRowBtnText}>{L("Manage Cards", "Administrar tarjetas")}</Text>
+            </Pressable>
+          </Section>
+        ) : null}
+
+        {activeTab === "settings" ? (
+          <Section title={L("Account Settings", "Ajustes de cuenta")}>
+            <Text style={styles.emptyText}>{L("Manage app preferences from this panel.", "Administra las preferencias de la app desde este panel.")}</Text>
+          </Section>
+        ) : null}
+
+        <View style={styles.legalFooter}>
+          <Pressable onPress={() => router.push("/legal/terms" as any)} hitSlop={8}>
+            <Text style={styles.legalLink}>{L("Terms of Service", "Términos de servicio")}</Text>
+          </Pressable>
+          <Text style={styles.legalSeparator}>•</Text>
+          <Pressable onPress={() => router.push("/legal/privacy" as any)} hitSlop={8}>
+            <Text style={styles.legalLink}>{L("Privacy Policy", "Política de privacidad")}</Text>
+          </Pressable>
         </View>
 
-        {/* Stats Section */}
-        <View className="mb-8">
-          <Text className="text-lg font-semibold text-foreground mb-4">Statistics</Text>
-          <View className="flex-row gap-4">
-            <View className="flex-1 bg-surface rounded-lg p-4 border border-border items-center">
-              <Text className="text-2xl font-bold text-primary">{completedCount}</Text>
-              <Text className="text-muted text-sm mt-1">Completed Rides</Text>
-            </View>
-            <View className="flex-1 bg-surface rounded-lg p-4 border border-border items-center">
-              <Text className="text-2xl font-bold text-primary">${totalSpent.toFixed(2)}</Text>
-              <Text className="text-muted text-sm mt-1">Total Spent</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Logout Button */}
-        <Pressable
-          onPress={handleLogout}
-          disabled={loading}
-          className="bg-error/10 border border-error rounded-lg py-4 items-center mb-8"
-        >
-          {loading ? (
-            <ActivityIndicator color="#EF4444" />
-          ) : (
-            <Text className="text-error font-semibold text-base">Log Out</Text>
-          )}
-        </Pressable>
       </ScrollView>
     </ScreenContainer>
   );
 }
+
+function TabButton({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={[styles.tabBtn, active && styles.tabBtnOn]}>
+      <Text style={[styles.tabBtnText, active && styles.tabBtnTextOn]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <View style={styles.sectionBody}>{children}</View>
+    </View>
+  );
+}
+
+function StatRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.rowBtn}>
+      <Text style={styles.rowBtnText}>{label}</Text>
+      <Text style={styles.rowBtnMeta}>{value}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 34,
+    gap: 18,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: "#1A1A2E",
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#2A2A40",
+  },
+  name: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#F8FAFC",
+  },
+  roleChip: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+    backgroundColor: "#FFEDD5",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  roleChipText: {
+    color: "#C2410C",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  tagline: {
+    marginTop: 8,
+    color: "#C2410C",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  tabBar: {
+    flexDirection: "row",
+    backgroundColor: "#121212",
+    borderWidth: 1,
+    borderColor: "#2A2A40",
+    borderRadius: 14,
+    padding: 4,
+    gap: 6,
+  },
+  tabBtn: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    alignItems: "center",
+  },
+  tabBtnOn: {
+    backgroundColor: "#F97316",
+  },
+  tabBtnText: {
+    fontSize: 12,
+    color: "#C2410C",
+    fontWeight: "700",
+  },
+  tabBtnTextOn: {
+    color: "#FFFFFF",
+  },
+  section: {
+    gap: 8,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#F8FAFC",
+  },
+  sectionBody: {
+    backgroundColor: "#1A1A2E",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#2A2A40",
+    overflow: "hidden",
+  },
+  formArea: {
+    padding: 14,
+    gap: 8,
+  },
+  label: {
+    fontSize: 12,
+    color: "#C2410C",
+    fontWeight: "700",
+  },
+  input: {
+    backgroundColor: "#121212",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#2A2A40",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: "#F8FAFC",
+    fontSize: 14,
+  },
+  inputBio: {
+    minHeight: 84,
+    textAlignVertical: "top",
+  },
+  emptyText: {
+    padding: 14,
+    fontSize: 14,
+    color: "#C2410C",
+  },
+  vehicleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#2A2A40",
+  },
+  vehicleTitle: {
+    color: "#F8FAFC",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  vehicleMeta: {
+    marginTop: 2,
+    color: "#C2410C",
+    fontSize: 12,
+  },
+  activeBtn: {
+    borderWidth: 1,
+    borderColor: "#3A3A58",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  activeBtnOn: {
+    borderColor: "#F97316",
+    backgroundColor: "#FFF7ED",
+  },
+  activeBtnText: {
+    color: "#C2410C",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  activeBtnTextOn: {
+    color: "#C2410C",
+  },
+  primaryRowBtn: {
+    margin: 14,
+    borderRadius: 12,
+    backgroundColor: "#F97316",
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  primaryRowBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  rowBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#2A2A40",
+  },
+  rowBtnText: {
+    color: "#E5E7EB",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  rowBtnMeta: {
+    color: "#C2410C",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  readonlyValue: {
+    color: "#C2410C",
+    fontSize: 13,
+    fontWeight: "600",
+    maxWidth: "58%",
+    textAlign: "right",
+  },
+  deleteBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FEF2F2",
+  },
+  editBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#2A2A40",
+  },
+  check: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#3A3A58",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkOn: {
+    borderColor: "#F97316",
+    backgroundColor: "#F97316",
+  },
+  checkTick: {
+    color: "#FFFFFF",
+    fontWeight: "800",
+    fontSize: 11,
+  },
+  legalFooter: {
+    marginTop: 6,
+    marginBottom: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  legalLink: {
+    color: "#2DD4BF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  legalSeparator: {
+    color: "#2DD4BF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+});

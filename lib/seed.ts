@@ -18,6 +18,22 @@ export const SERVICE_TYPES: ServiceType[] = [
     estimatedMinutes: 35,
   },
   {
+    code: "lockout",
+    name: "Lockout",
+    description: "Unlock your vehicle when keys are locked inside.",
+    icon: "key.fill",
+    basePrice: 65,
+    estimatedMinutes: 25,
+  },
+  {
+    code: "car_wash",
+    name: "Car Wash",
+    description: "On-site exterior wash and quick interior cleanup.",
+    icon: "drop.circle.fill",
+    basePrice: 55,
+    estimatedMinutes: 35,
+  },
+  {
     code: "oil_change",
     name: "Oil Change",
     description: "Full synthetic oil change and filter replacement.",
@@ -64,6 +80,14 @@ export const SERVICE_TYPES: ServiceType[] = [
     icon: "checkmark.circle.fill",
     basePrice: 59,
     estimatedMinutes: 40,
+  },
+  {
+    code: "other",
+    name: "Other",
+    description: "Tell us what you need and we will route a custom booking request.",
+    icon: "ellipsis.circle.fill",
+    basePrice: 99,
+    estimatedMinutes: 60,
   },
 ];
 

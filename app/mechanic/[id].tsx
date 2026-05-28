@@ -10,13 +10,14 @@ import { computeFare } from "@/lib/fare";
 import { haptic } from "@/lib/haptics";
 import { useLocaleContext } from "@/hooks/use-locale";
 import { localizedServiceName } from "@/lib/service-i18n";
+import { formatDistanceByRegion } from "@/lib/distance";
 
 export default function MechanicDetailScreen() {
   const router = useRouter();
   const { id, service } = useLocalSearchParams<{ id: string; service?: string }>();
   const mechanic = typeof id === "string" ? getMechanic(id) : undefined;
   const serviceType = typeof service === "string" ? getServiceType(service) : undefined;
-  const { t, locale, formatPrice } = useLocaleContext();
+  const { t, locale, formatPrice, region } = useLocaleContext();
 
   if (!mechanic) {
     return (
@@ -35,7 +36,7 @@ export default function MechanicDetailScreen() {
     router.push({ pathname: "/confirm" as any, params: { mechanicId: mechanic.id, service: code } } as any);
   };
 
-  const estimated = computeFare(mechanic, serviceType ?? SERVICE_TYPES.find((s) => s.code === "general_checkup")!);
+  const estimated = computeFare(mechanic, serviceType ?? SERVICE_TYPES.find((s) => s.code === "general_checkup")!, region);
 
   return (
     <ScreenContainer>
@@ -68,7 +69,7 @@ export default function MechanicDetailScreen() {
         <View style={styles.statsRow}>
           <Stat icon="clock.fill" label={t("mechanic.eta")} value={`${mechanic.etaMinutes} ${t("common.minutes_short")}`} />
           <View style={styles.statDivider} />
-          <Stat icon="location.fill" label={t("mechanic.distance")} value={`${mechanic.distanceMiles.toFixed(1)} ${t("common.miles_short")}`} />
+          <Stat icon="location.fill" label={t("mechanic.distance")} value={formatDistanceByRegion(mechanic.distanceMiles, region)} />
           <View style={styles.statDivider} />
           <Stat icon="creditcard.fill" label={t("mechanic.rate")} value={`${formatPrice(mechanic.hourlyRate)}/hr`} />
         </View>

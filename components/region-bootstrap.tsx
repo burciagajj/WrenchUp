@@ -6,6 +6,7 @@
 import { useRegionBootstrap } from "@/hooks/use-region-bootstrap";
 
 export function RegionBootstrap() {
-  useRegionBootstrap({ eager: false });
+  // Run eager location refinement app-wide so MX detection works even when device language is English.
+  useRegionBootstrap({ eager: true });
   return null;
 }

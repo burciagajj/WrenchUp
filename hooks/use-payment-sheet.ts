@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useStripe } from "@stripe/stripe-react-native";
-import { createMockPaymentIntent, simulatePaymentSheetResult } from "@/lib/mock-payment";
+import Constants from "expo-constants";
 import type { PresentArgs, PresentResult } from "./use-payment-sheet.types";
 
 /**
@@ -17,16 +17,22 @@ export function usePaymentSheet() {
       setError(null);
 
       try {
-        const intent = createMockPaymentIntent(args.amount, args.currency);
+        // In Expo Go, Stripe PaymentSheet cannot run against mocked PI ids.
+        // Return unsupported so caller can fall back to app-local simulated flow.
+        if (Constants.appOwnership === "expo") {
+          return { status: "unsupported" };
+        }
 
         const initResult = await initPaymentSheet({
-          paymentIntentClientSecret: intent.clientSecret,
+          // Real backend-generated client secret must be wired before enabling this path.
+          // For now, keep the fallback behavior for unsupported/back-end pending setups.
+          paymentIntentClientSecret: "",
           merchantDisplayName: "WrenchUp",
           customerId: args.customerEmail,
         });
 
         if (initResult.error) {
-          throw new Error(initResult.error.message);
+          return { status: "unsupported" };
         }
 
         const presentResult = await presentPaymentSheet();
@@ -38,21 +44,11 @@ export function usePaymentSheet() {
           return { status: "failed", message: presentResult.error.message };
         }
 
-        const intentStatus = simulatePaymentSheetResult(intent.clientSecret);
-
-        if (
-          intentStatus.status === "succeeded" ||
-          intentStatus.status === "requires_action" ||
-          intentStatus.status === "processing"
-        ) {
-          return { status: "completed", paymentMethodId: intent.id };
-        }
-
-        return { status: "failed", message: "Payment could not be completed" };
+        return { status: "completed" };
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Payment failed";
         setError(msg);
-        return { status: "failed", message: msg };
+        return { status: "unsupported" };
       } finally {
         setLoading(false);
       }

@@ -6,9 +6,9 @@ import { getApiBaseUrl } from "@/constants/oauth";
 import type { PickedImage } from "@/hooks/use-image-picker";
 import { supabaseStorage } from "@/lib/_core/supabase-storage";
 import { supabaseUserData } from "@/lib/_core/supabase-user-data";
-import { refreshProfileSessionToken } from "@/lib/profile-session";
+import { ensureValidAccessToken } from "@/lib/profile-session";
 
-const MAX_DATA_URL_BASE64_CHARS = 1_400_000; // ~1 MB image as base64 in avatar_url
+const MAX_DATA_URL_BASE64_CHARS = 2_500_000; // allows larger compressed images in avatar_url fallback
 
 function isBucketMissingError(err: unknown): boolean {
   const e = err as { code?: string; message?: string };
@@ -33,16 +33,19 @@ async function uploadViaServerApi(
   const url = `${baseUrl}/api/profile-photo`;
   console.log("[uploadProfilePhoto] Trying server upload:", url);
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: controller.signal,
     body: JSON.stringify({
       userId,
       sessionToken,
       base64: image.base64,
       mimeType: image.mimeType,
     }),
-  });
+  }).finally(() => clearTimeout(timeout));
 
   const data = await res.json().catch(() => ({}));
 
@@ -75,8 +78,7 @@ async function uploadAsDataUrl(
   const dataUrl = `data:${image.mimeType};base64,${image.base64}`;
   console.log("[uploadProfilePhoto] Saving avatar as data URL (Storage bucket not available)");
 
-  const token = await refreshProfileSessionToken(sessionToken);
-  await supabaseUserData.updateProfilePhoto(userId, dataUrl, token);
+  await supabaseUserData.updateProfilePhoto(userId, dataUrl, sessionToken);
   return dataUrl;
 }
 
@@ -88,7 +90,8 @@ export async function uploadProfilePhoto(
   image: PickedImage,
   sessionToken: string
 ): Promise<string> {
-  const token = await refreshProfileSessionToken(sessionToken);
+  // Validate token once, then reuse for all upload attempts.
+  const token = await ensureValidAccessToken(sessionToken);
 
   // 1) Server API (auto-creates bucket when SUPABASE_SERVICE_ROLE_KEY is set on server)
   try {
@@ -98,9 +101,7 @@ export async function uploadProfilePhoto(
       return serverUrl;
     }
   } catch (err) {
-    if (!isBucketMissingError(err)) {
-      console.warn("[uploadProfilePhoto] Server upload failed:", err);
-    }
+    console.warn("[uploadProfilePhoto] Server upload failed, continuing with fallback:", err);
   }
 
   // 2) Direct Supabase Storage (requires profile-photos bucket + RLS)
@@ -114,8 +115,7 @@ export async function uploadProfilePhoto(
     await supabaseUserData.updateProfilePhoto(userId, result.publicUrl, token);
     return result.publicUrl;
   } catch (err) {
-    if (!isBucketMissingError(err)) throw err;
-    console.warn("[uploadProfilePhoto] Storage bucket missing, using data-URL fallback");
+    console.warn("[uploadProfilePhoto] Storage upload failed, using data-URL fallback:", err);
   }
 
   // 3) Fallback — works without any Storage bucket

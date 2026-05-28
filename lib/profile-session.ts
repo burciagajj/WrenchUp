@@ -43,6 +43,26 @@ export async function refreshAccessToken(): Promise<string> {
   return refreshResult.access_token;
 }
 
+function decodeJwtExpMs(token: string): number | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const atobFn = (globalThis as any).atob as ((value: string) => string) | undefined;
+    if (!atobFn) return null;
+    const payload = JSON.parse(atobFn(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (!payload?.exp || typeof payload.exp !== "number") return null;
+    return payload.exp * 1000;
+  } catch {
+    return null;
+  }
+}
+
+function isTokenExpiringSoon(token: string, thresholdMs = 60_000): boolean {
+  const expMs = decodeJwtExpMs(token);
+  if (!expMs) return false;
+  return Date.now() + thresholdMs >= expMs;
+}
+
 /**
  * Return a valid access token for PostgREST calls.
  * Proactively refreshes when a refresh token is stored (avoids PGRST303 on cold start).
@@ -50,19 +70,22 @@ export async function refreshAccessToken(): Promise<string> {
 export async function ensureValidAccessToken(
   currentToken?: string | null
 ): Promise<string> {
+  const token = currentToken ?? (await getSessionToken());
+  if (token && !isTokenExpiringSoon(token)) {
+    return token;
+  }
+
   const refreshToken = await getRefreshToken();
   if (refreshToken) {
     try {
       return await refreshAccessToken();
     } catch (err) {
       console.warn("[profile-session] Proactive refresh failed:", err);
-      const fallback = currentToken ?? (await getSessionToken());
+      const fallback = token ?? (await getSessionToken());
       if (fallback) return fallback;
       throw err;
     }
   }
-
-  const token = currentToken ?? (await getSessionToken());
   if (!token) {
     throw new Error("No session token. Please sign in again.");
   }

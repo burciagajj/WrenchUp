@@ -24,6 +24,11 @@ export type StringKey =
   | "tabs.home"
   | "tabs.activity"
   | "tabs.vehicles"
+  | "tabs.earnings"
+  | "tabs.disputes"
+  | "tabs.book_service"
+  | "tabs.booked_requests"
+  | "tabs.requirements"
   | "tabs.profile"
   | "home.greeting_morning"
   | "home.greeting_afternoon"
@@ -51,20 +56,26 @@ export type StringKey =
   | "home.discount_banner"
   | "service.battery_jump"
   | "service.flat_tire"
+  | "service.lockout"
+  | "service.car_wash"
   | "service.oil_change"
   | "service.brake_service"
   | "service.diagnostic"
   | "service.engine_repair"
   | "service.ac_service"
   | "service.general_checkup"
+  | "service.other"
   | "service.battery_jump_desc"
   | "service.flat_tire_desc"
+  | "service.lockout_desc"
+  | "service.car_wash_desc"
   | "service.oil_change_desc"
   | "service.brake_service_desc"
   | "service.diagnostic_desc"
   | "service.engine_repair_desc"
   | "service.ac_service_desc"
   | "service.general_checkup_desc"
+  | "service.other_desc"
   | "service_select.title"
   | "service_select.cta_select"
   | "service_select.cta_find"
@@ -329,6 +340,11 @@ export const STRINGS_EN: Strings = {
   "tabs.home": "Home",
   "tabs.activity": "Activity",
   "tabs.vehicles": "Vehicles",
+  "tabs.earnings": "Earnings",
+  "tabs.disputes": "Disputes",
+  "tabs.book_service": "Book a Service",
+  "tabs.booked_requests": "Booked Requests",
+  "tabs.requirements": "Requirements",
   "tabs.profile": "Profile",
   "home.greeting_morning": "Good morning",
   "home.greeting_afternoon": "Good afternoon",
@@ -356,20 +372,26 @@ export const STRINGS_EN: Strings = {
   "home.discount_banner": "México pricing active — 60% off displayed estimates",
   "service.battery_jump": "Battery Jump",
   "service.flat_tire": "Flat Tire",
+  "service.lockout": "Lockout",
+  "service.car_wash": "Car Wash",
   "service.oil_change": "Oil Change",
   "service.brake_service": "Brake Service",
   "service.diagnostic": "Diagnostic",
   "service.engine_repair": "Engine Repair",
   "service.ac_service": "A/C Service",
   "service.general_checkup": "Check-Up",
+  "service.other": "Other",
   "service.battery_jump_desc": "Jump start a dead battery or test/replace it on the spot.",
   "service.flat_tire_desc": "Tire change, patch, or spare installation at your location.",
+  "service.lockout_desc": "Unlock your vehicle when your keys are locked inside.",
+  "service.car_wash_desc": "On-site exterior wash with a quick interior cleanup.",
   "service.oil_change_desc": "Full synthetic oil change and filter replacement.",
   "service.brake_service_desc": "Pads, rotors, fluid check, and brake inspection.",
   "service.diagnostic_desc": "OBD-II scan and full system diagnostic with written report.",
   "service.engine_repair_desc": "On-site fixes for common engine issues and minor repairs.",
   "service.ac_service_desc": "Recharge, leak check, and A/C performance inspection.",
   "service.general_checkup_desc": "Multi-point inspection covering fluids, belts, and brakes.",
+  "service.other_desc": "Tell us what you need and submit a custom booking request.",
   "service_select.title": "Choose a service",
   "service_select.cta_select": "Select a service",
   "service_select.cta_find": "Find mechanics",
@@ -397,7 +419,7 @@ export const STRINGS_EN: Strings = {
   "confirm.payment": "Payment",
   "confirm.fare_estimate": "Fare estimate",
   "confirm.booking_fee": "Booking fee",
-  "confirm.dispatch": "Dispatch ({distance} mi)",
+  "confirm.dispatch": "Dispatch ({distance} {unit})",
   "confirm.estimated_total": "Estimated total",
   "confirm.disclaimer": "Final amount may vary based on actual time and parts. You'll review the receipt before payment.",
   "confirm.cta_confirm": "Confirm & Request",
@@ -633,6 +655,11 @@ export const STRINGS_ES_MX: Strings = {
   "tabs.home": "Inicio",
   "tabs.activity": "Actividad",
   "tabs.vehicles": "Vehículos",
+  "tabs.earnings": "Ganancias",
+  "tabs.disputes": "Disputas",
+  "tabs.book_service": "Agendar servicio",
+  "tabs.booked_requests": "Solicitudes agendadas",
+  "tabs.requirements": "Requisitos",
   "tabs.profile": "Perfil",
   "home.greeting_morning": "Buenos días",
   "home.greeting_afternoon": "Buenas tardes",
@@ -660,20 +687,26 @@ export const STRINGS_ES_MX: Strings = {
   "home.discount_banner": "Precios México activos — 60% de descuento en estimados",
   "service.battery_jump": "Pasar corriente",
   "service.flat_tire": "Llanta ponchada",
+  "service.lockout": "Llaves adentro",
+  "service.car_wash": "Lavado de auto",
   "service.oil_change": "Cambio de aceite",
   "service.brake_service": "Servicio de frenos",
   "service.diagnostic": "Diagnóstico",
   "service.engine_repair": "Reparación de motor",
   "service.ac_service": "Servicio de A/C",
   "service.general_checkup": "Revisión general",
+  "service.other": "Otro",
   "service.battery_jump_desc": "Pasamos corriente o probamos/cambiamos la batería en el momento.",
   "service.flat_tire_desc": "Cambio de llanta, parche o instalación de la refacción donde estés.",
+  "service.lockout_desc": "Abrimos tu vehículo cuando las llaves se quedaron dentro.",
+  "service.car_wash_desc": "Lavado exterior a domicilio con limpieza interior rápida.",
   "service.oil_change_desc": "Cambio de aceite sintético completo y filtro nuevo.",
   "service.brake_service_desc": "Pastillas, discos, revisión del líquido e inspección de frenos.",
   "service.diagnostic_desc": "Escaneo OBD-II y diagnóstico completo con reporte por escrito.",
   "service.engine_repair_desc": "Reparaciones comunes y arreglos menores de motor en sitio.",
   "service.ac_service_desc": "Recarga, prueba de fugas y revisión de desempeño del A/C.",
   "service.general_checkup_desc": "Inspección de varios puntos: fluidos, bandas y frenos.",
+  "service.other_desc": "Cuéntanos tu problema y envía una reserva personalizada.",
   "service_select.title": "Elige un servicio",
   "service_select.cta_select": "Selecciona un servicio",
   "service_select.cta_find": "Buscar mecánicos",
@@ -701,7 +734,7 @@ export const STRINGS_ES_MX: Strings = {
   "confirm.payment": "Pago",
   "confirm.fare_estimate": "Estimado de tarifa",
   "confirm.booking_fee": "Cargo por reserva",
-  "confirm.dispatch": "Traslado ({distance} mi)",
+  "confirm.dispatch": "Traslado ({distance} {unit})",
   "confirm.estimated_total": "Total estimado",
   "confirm.disclaimer": "El monto final puede variar según el tiempo real y las refacciones. Verás el recibo antes de pagar.",
   "confirm.cta_confirm": "Confirmar y solicitar",

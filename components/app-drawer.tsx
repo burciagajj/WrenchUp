@@ -10,25 +10,34 @@ import {
 import { useRouter, useSegments } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { Avatar } from "@/components/avatar";
 import { useAppDrawer } from "@/lib/app-drawer-context";
 import { useAuth } from "@/lib/auth-context";
-import { useT } from "@/hooks/use-locale";
+import { useClearUserData } from "@/lib/auth-context";
+import { useStore } from "@/lib/store";
+import { useLocaleContext, useT } from "@/hooks/use-locale";
 import { haptic } from "@/lib/haptics";
+import { safeReplace } from "@/lib/safe-router";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
 
 type NavItem = {
   segment: string;
-  href: "/(tabs)" | "/(tabs)/activity" | "/(tabs)/vehicles" | "/(tabs)/profile";
+  href: "/(tabs)" | "/(tabs)/book-service" | "/(tabs)/booked-requests" | "/(tabs)/activity" | "/(tabs)/vehicles" | "/(tabs)/earnings" | "/(tabs)/disputes" | "/(tabs)/requirements" | "/(tabs)/profile";
   icon: string;
-  labelKey: "tabs.home" | "tabs.activity" | "tabs.vehicles" | "tabs.profile";
+  labelKey: "tabs.home" | "tabs.book_service" | "tabs.booked_requests" | "tabs.activity" | "tabs.vehicles" | "tabs.earnings" | "tabs.disputes" | "tabs.requirements" | "tabs.profile";
 };
 
 const NAV_ITEMS: NavItem[] = [
   { segment: "index", href: "/(tabs)", icon: "house.fill", labelKey: "tabs.home" },
+  { segment: "book-service", href: "/(tabs)/book-service", icon: "calendar.badge.plus", labelKey: "tabs.book_service" },
+  { segment: "booked-requests", href: "/(tabs)/booked-requests", icon: "calendar", labelKey: "tabs.booked_requests" },
   { segment: "activity", href: "/(tabs)/activity", icon: "list.bullet", labelKey: "tabs.activity" },
   { segment: "vehicles", href: "/(tabs)/vehicles", icon: "car.fill", labelKey: "tabs.vehicles" },
+  { segment: "earnings", href: "/(tabs)/earnings", icon: "dollarsign.circle.fill", labelKey: "tabs.earnings" },
+  { segment: "disputes", href: "/(tabs)/disputes", icon: "exclamationmark.triangle.fill", labelKey: "tabs.disputes" },
+  { segment: "requirements", href: "/(tabs)/requirements", icon: "checkmark.shield.fill", labelKey: "tabs.requirements" },
   { segment: "profile", href: "/(tabs)/profile", icon: "person.fill", labelKey: "tabs.profile" },
 ];
 
@@ -38,7 +47,11 @@ export function AppDrawer() {
   const segments = useSegments();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const { user } = useAuth();
+  const { locale } = useLocaleContext();
+  const isEs = locale === "es-MX";
+  const { user, signOut } = useAuth();
+  const { state } = useStore();
+  const clearUserData = useClearUserData();
 
   const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
@@ -59,14 +72,14 @@ export function AppDrawer() {
     ]).start();
   }, [isOpen, slideAnim, overlayAnim]);
 
-  const activeSegment = segments[segments.length - 1] ?? "index";
+  const activeSegment = segments[segments.length - 1];
 
   const navigate = (item: NavItem) => {
     haptic.light();
     closeDrawer();
     const isActive =
       item.segment === activeSegment ||
-      (item.segment === "index" && (activeSegment === "index" || activeSegment === "(tabs)"));
+      (item.segment === "index" && (!activeSegment || activeSegment === "(tabs)"));
     if (!isActive) {
       router.push(item.href as never);
     }
@@ -75,6 +88,18 @@ export function AppDrawer() {
   if (!isOpen) {
     return null;
   }
+
+  const handleLogout = async () => {
+    haptic.warning();
+    closeDrawer();
+    try {
+      await clearUserData();
+      await signOut();
+      safeReplace("/auth/signin");
+    } catch (err) {
+      console.error("[AppDrawer] Logout failed:", err);
+    }
+  };
 
   return (
     <View style={[StyleSheet.absoluteFill, styles.portal]} pointerEvents="box-none">
@@ -104,14 +129,12 @@ export function AppDrawer() {
         ]}
       >
         <View style={styles.drawerHeader}>
-          <View style={styles.logoMark}>
-            <IconSymbol name="wrench.fill" size={22} color="#FFFFFF" />
-          </View>
+          <Avatar name={state.userName || "User"} url={state.photoUrl ?? undefined} size={44} />
           <View style={styles.drawerHeaderText}>
             <Text style={styles.brand}>WrenchUp</Text>
-            {user?.email ? (
+            {state.userName ? (
               <Text style={styles.email} numberOfLines={1}>
-                {user.email}
+                {state.userName}
               </Text>
             ) : null}
           </View>
@@ -121,11 +144,16 @@ export function AppDrawer() {
         </View>
 
         <View style={styles.navList}>
-          {NAV_ITEMS.map((item) => {
+          {NAV_ITEMS.filter((item) => {
+            if (user?.role === "mechanic") {
+              return item.segment !== "disputes" && item.segment !== "book-service";
+            }
+            return item.segment !== "requirements" && item.segment !== "earnings" && item.segment !== "booked-requests";
+          }).map((item) => {
             const isActive =
               item.segment === activeSegment ||
               (item.segment === "index" &&
-                (!activeSegment || activeSegment === "index" || activeSegment === "(tabs)"));
+                (!activeSegment || activeSegment === "(tabs)"));
             return (
               <Pressable
                 key={item.href}
@@ -154,6 +182,18 @@ export function AppDrawer() {
               </Pressable>
             );
           })}
+        </View>
+
+        <View style={styles.footer}>
+          <Pressable
+            onPress={handleLogout}
+            style={({ pressed }) => [styles.logoutBtn, pressed && styles.navItemPressed]}
+          >
+            <View style={styles.logoutIconWrap}>
+              <IconSymbol name="rectangle.portrait.and.arrow.right" size={20} color="#FCA5A5" />
+            </View>
+            <Text style={styles.logoutText}>{isEs ? "Cerrar sesión" : "Log Out"}</Text>
+          </Pressable>
         </View>
       </Animated.View>
     </View>
@@ -189,14 +229,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#334155",
     gap: 12,
-  },
-  logoMark: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: "#F97316",
-    alignItems: "center",
-    justifyContent: "center",
   },
   drawerHeaderText: {
     flex: 1,
@@ -259,5 +291,34 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 2,
     backgroundColor: "#F97316",
+  },
+  footer: {
+    marginTop: "auto",
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#334155",
+  },
+  logoutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(239, 68, 68, 0.12)",
+  },
+  logoutIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(239, 68, 68, 0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoutText: {
+    color: "#FCA5A5",
+    fontSize: 16,
+    fontWeight: "700",
   },
 });

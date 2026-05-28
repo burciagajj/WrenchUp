@@ -3,12 +3,15 @@
 export type ServiceCode =
   | "battery_jump"
   | "flat_tire"
+  | "lockout"
+  | "car_wash"
   | "oil_change"
   | "brake_service"
   | "diagnostic"
   | "engine_repair"
   | "ac_service"
-  | "general_checkup";
+  | "general_checkup"
+  | "other";
 
 export type ServiceType = {
   code: ServiceCode;
@@ -30,8 +33,15 @@ export type Vehicle = {
   year: number;
   make: string;
   model: string;
+  trim?: string;
+  engineSize?: string;
+  transmissionType?: "automatic" | "manual" | "cvt" | "dct" | "other";
+  drivetrain?: "AWD" | "FWD" | "RWD" | "4WD";
   color: string;
   plate: string;
+  insuranceDocUri?: string | null;
+  registrationStickerUri?: string | null;
+  approvalStatus?: "pending" | "approved" | "rejected";
 };
 
 export type MechanicReview = {
@@ -73,6 +83,11 @@ export type JobStatus =
 export type Job = {
   id: string;
   mechanicId: string;
+  mechanicName?: string;
+  mechanicPhotoUrl?: string | null;
+  remoteRequestId?: string;
+  isBooked?: boolean;
+  scheduledFor?: number | null;
   vehicleId: string;
   service: ServiceCode;
   location: string;
@@ -91,6 +106,8 @@ export type Job = {
   ratingComment?: string;
   pickup?: LatLng;     // captured at booking time from user's current location
   mechanicStart?: LatLng; // mechanic's start coords at booking time
+  mechanicLiveCoords?: LatLng | null;
+  mechanicMarkedDoneAt?: number;
   paymentMethodId?: string; // Stripe payment method ID
 };
 
@@ -116,8 +133,19 @@ export type PaymentMethod = {
   };
 };
 
+export type InAppNotification = {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: number;
+  readAt?: number;
+  roleScope: "customer" | "mechanic" | "all";
+  route?: string;
+};
+
 export type MechanicJobStatus =
   | "pending"      // incoming request, awaiting accept
+  | "upcoming"     // accepted booked job, waiting for scheduled time
   | "heading_there" // accepted, driving to customer
   | "arrived"
   | "in_progress"
@@ -127,7 +155,10 @@ export type MechanicJobStatus =
 
 export type MechanicJob = {
   id: string;
+  remoteRequestId?: string;
+  isBooked?: boolean;
   customerName: string;
+  customerPhotoUrl?: string | null;
   vehicle: string;          // "2020 Honda Civic"
   service: ServiceCode;
   location: string;
@@ -139,6 +170,10 @@ export type MechanicJob = {
   completedAt?: number;
   pickup?: LatLng;          // customer location
   mechanicStart?: LatLng;   // mechanic start location
+  scheduledFor?: number | null;
+  customerNote?: string;
+  customerHasParts?: boolean | null;
+  issuePhotoUrl?: string | null;
 };
 
 export type UserDataStatus = "idle" | "loading" | "ready";
@@ -158,6 +193,7 @@ export type AppState = {
   jobs: Job[];
   // Mechanic mode
   role: Role;
+  dashboardRoleOverride: Role | null;
   mechanicOnline: boolean;
   mechanicJobs: MechanicJob[];
   mechanicActiveJobId: string | null;
@@ -171,4 +207,5 @@ export type AppState = {
   defaultPaymentMethodId: string | null;
   paymentStatus: "idle" | "processing" | "success" | "error";
   paymentError: string | null;
+  notificationsInbox: InAppNotification[];
 };

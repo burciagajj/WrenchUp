@@ -16,6 +16,7 @@ export interface StripePaymentSheetProps {
   selectedMethodId: string | null;
   onSelectMethod: (methodId: string) => void;
   onAddNewCard: () => void;
+  onAddTestCard?: () => void;
   onConfirmPayment: (methodId: string) => Promise<void>;
   loading?: boolean;
   error?: string | null;
@@ -29,6 +30,7 @@ export function StripePaymentSheet({
   selectedMethodId,
   onSelectMethod,
   onAddNewCard,
+  onAddTestCard,
   onConfirmPayment,
   loading = false,
   error = null,
@@ -36,12 +38,14 @@ export function StripePaymentSheet({
   const colors = useColors();
   const t = useT();
   const [processing, setProcessing] = useState(false);
+  const isBusy = processing || loading;
 
   const selectedMethod = savedMethods.find((m) => m.id === selectedMethodId);
   const currencySymbol = currency === "mxn" ? "$" : "$";
   const currencyCode = currency === "mxn" ? "MXN" : "USD";
 
   const handleConfirm = async () => {
+    if (isBusy) return;
     if (!selectedMethodId) return;
     setProcessing(true);
     try {
@@ -128,37 +132,61 @@ export function StripePaymentSheet({
       )}
 
       {/* Add New Card Button */}
-      <Pressable
-        onPress={onAddNewCard}
-        style={({ pressed }) => [
-          {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            borderWidth: 1,
-            borderRadius: 8,
-            padding: 12,
-            opacity: pressed ? 0.7 : 1,
-          },
-        ]}
-      >
-        <View className="flex-row items-center justify-center gap-2">
-          <MaterialIcons name="add" size={20} color={colors.primary} />
-          <Text className="font-semibold text-primary">
-            {t("payment.add_card" as any)}
-          </Text>
-        </View>
-      </Pressable>
+      <View className="gap-2">
+        <Pressable
+          onPress={onAddNewCard}
+          style={({ pressed }) => [
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              borderWidth: 1,
+              borderRadius: 8,
+              padding: 12,
+              opacity: pressed ? 0.7 : 1,
+            },
+          ]}
+        >
+          <View className="flex-row items-center justify-center gap-2">
+            <MaterialIcons name="add" size={20} color={colors.primary} />
+            <Text className="font-semibold text-primary">
+              {t("payment.add_card" as any)}
+            </Text>
+          </View>
+        </Pressable>
+        {onAddTestCard ? (
+          <Pressable
+            onPress={onAddTestCard}
+            style={({ pressed }) => [
+              {
+                backgroundColor: colors.surface,
+                borderColor: "#F97316",
+                borderWidth: 1,
+                borderRadius: 8,
+                padding: 12,
+                opacity: pressed ? 0.7 : 1,
+              },
+            ]}
+          >
+            <View className="flex-row items-center justify-center gap-2">
+              <MaterialIcons name="science" size={18} color="#F97316" />
+              <Text className="font-semibold" style={{ color: "#F97316" }}>
+                Use Test Card (4242)
+              </Text>
+            </View>
+          </Pressable>
+        ) : null}
+      </View>
 
       {/* Confirm Payment Button */}
       <PrimaryButton
         title={
-          processing
+          isBusy
             ? t("common.searching" as any)
             : `${t("common.confirm" as any)} Payment`
         }
         onPress={handleConfirm}
-        disabled={!selectedMethodId || processing}
-        loading={processing}
+        disabled={!selectedMethodId || isBusy}
+        loading={isBusy}
       />
     </View>
   );

@@ -9,7 +9,7 @@ if (Platform.OS !== "web") {
       shouldShowAlert: true,
       shouldShowBanner: true,
       shouldShowList: true,
-      shouldPlaySound: false,
+      shouldPlaySound: true,
       shouldSetBadge: false,
     }),
   });
@@ -29,12 +29,26 @@ export async function ensureNotificationPermissions(): Promise<boolean> {
         importance: Notifications.AndroidImportance.HIGH,
         vibrationPattern: [0, 200, 100, 200],
         lightColor: "#F97316",
+        sound: "default",
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: false,
       });
     }
     const existing = await Notifications.getPermissionsAsync();
     let status = existing.status;
     if (status !== "granted") {
-      const req = await Notifications.requestPermissionsAsync();
+      const req = await Notifications.requestPermissionsAsync({
+        ios: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+        },
+        android: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+        },
+      });
       status = req.status;
     }
     permissionGranted = status === "granted";
@@ -74,11 +88,38 @@ export async function notifyNow({ title, body, data }: NotifyArgs): Promise<void
         title,
         body: body ?? "",
         data: data ?? {},
-        sound: false,
+        sound: "default",
       },
       trigger: null, // fire immediately
     });
   } catch {
     // swallow
+  }
+}
+
+interface ScheduleArgs {
+  title: string;
+  body?: string;
+  at: Date;
+  data?: Record<string, unknown>;
+}
+
+export async function scheduleNotificationAt({ title, body, at, data }: ScheduleArgs): Promise<string | null> {
+  if (Platform.OS === "web") return null;
+  try {
+    const ok = await ensureNotificationPermissions();
+    if (!ok) return null;
+    if (at.getTime() <= Date.now()) return null;
+    return await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body: body ?? "",
+        data: data ?? {},
+        sound: "default",
+      },
+      trigger: at as any,
+    });
+  } catch {
+    return null;
   }
 }

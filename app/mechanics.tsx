@@ -11,6 +11,7 @@ import { haptic } from "@/lib/haptics";
 import type { Mechanic } from "@/lib/types";
 import { useLocaleContext } from "@/hooks/use-locale";
 import { localizedServiceName } from "@/lib/service-i18n";
+import { formatDistanceByRegion } from "@/lib/distance";
 
 type SortKey = "eta" | "rating" | "price";
 
@@ -19,7 +20,7 @@ export default function MechanicsScreen() {
   const { service } = useLocalSearchParams<{ service?: string }>();
   const [sort, setSort] = useState<SortKey>("eta");
   const serviceType = typeof service === "string" ? getServiceType(service) : undefined;
-  const { t, locale, formatPrice } = useLocaleContext();
+  const { t, locale, formatPrice, region } = useLocaleContext();
 
   const sorted = useMemo(() => {
     const list = [...MECHANICS];
@@ -92,9 +93,9 @@ export default function MechanicsScreen() {
         renderItem={({ item }) => (
           <MechanicCard
             mechanic={item}
-            estimatedTotal={serviceType ? computeFare(item, serviceType).total : undefined}
+            estimatedTotal={serviceType ? computeFare(item, serviceType, region).total : undefined}
             etaUnit={t("common.minutes_short")}
-            milesUnit={t("common.miles_short")}
+            distanceText={formatDistanceByRegion(item.distanceMiles, region)}
             formatPrice={formatPrice}
             onPress={() => openMechanic(item)}
           />
@@ -108,14 +109,14 @@ function MechanicCard({
   mechanic,
   estimatedTotal,
   etaUnit,
-  milesUnit,
+  distanceText,
   formatPrice,
   onPress,
 }: {
   mechanic: Mechanic;
   estimatedTotal?: number;
   etaUnit: string;
-  milesUnit: string;
+  distanceText: string;
   formatPrice: (usd: number) => string;
   onPress: () => void;
 }) {
@@ -143,7 +144,7 @@ function MechanicCard({
           <IconSymbol name="clock.fill" size={11} color="#FFFFFF" />
           <Text style={styles.etaText}>{mechanic.etaMinutes} {etaUnit}</Text>
         </View>
-        <Text style={styles.distance}>{mechanic.distanceMiles.toFixed(1)} {milesUnit}</Text>
+        <Text style={styles.distance}>{distanceText}</Text>
         {typeof estimatedTotal === "number" ? (
           <Text style={styles.price}>{formatPrice(estimatedTotal)}</Text>
         ) : (

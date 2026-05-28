@@ -8,6 +8,10 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Avatar } from "@/components/avatar";
 import { PrimaryButton } from "@/components/primary-button";
 import { haptic } from "@/lib/haptics";
+import { useAuth } from "@/lib/auth-context";
+import { resolveAuthSession } from "@/lib/resolve-auth-session";
+import { updateDispatchStatus } from "@/lib/live-dispatch";
+import { generateReceiptNumber } from "@/lib/receipt";
 
 const TIP_OPTIONS = [0, 5, 10, 15];
 
@@ -15,6 +19,7 @@ export default function CompleteScreen() {
   const router = useRouter();
   const { jobId } = useLocalSearchParams<{ jobId: string }>();
   const { dispatch } = useStore();
+  const { user } = useAuth();
   const job = useJob(jobId);
   const [rating, setRating] = useState<number>(5);
   const [tip, setTip] = useState<number>(5);
@@ -32,15 +37,49 @@ export default function CompleteScreen() {
 
   const mechanic = getMechanic(job.mechanicId);
   const service = getServiceType(job.service);
-  if (!mechanic || !service) return null;
+  if (!service) {
+    return (
+      <ScreenContainer>
+        <View style={styles.errorWrap}>
+          <Text style={styles.errorText}>Service details unavailable.</Text>
+        </View>
+      </ScreenContainer>
+    );
+  }
 
-  const handleSubmit = () => {
+  const mechanicName =
+    mechanic?.name || job.mechanicName || "Assigned Mechanic";
+  const mechanicPhotoUrl = mechanic?.photoUrl || null;
+
+  const handleSubmit = async () => {
     haptic.success();
     dispatch({
       type: "COMPLETE_JOB",
       payload: { id: job.id, rating, tip, ratingComment: comment.trim() || undefined },
     });
     router.replace("/(tabs)/activity" as any);
+
+    if (job.remoteRequestId && user?.id) {
+      const remoteRequestId = job.remoteRequestId;
+      void (async () => {
+        try {
+          const resolved = await resolveAuthSession(user);
+          if (resolved) {
+            const now = new Date();
+            const releaseAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            await updateDispatchStatus(resolved.sessionToken, remoteRequestId, "completed", {
+              receiptNumber: generateReceiptNumber(),
+              customerCompletedAt: now.toISOString(),
+              paymentState: "ready_for_release",
+              disputeWindowEndsAt: releaseAt.toISOString(),
+              fundsReleaseAt: releaseAt.toISOString(),
+            });
+          }
+        } catch (error) {
+          console.warn("[Complete] Deferred remote completion sync:", error);
+        }
+      })();
+    }
   };
 
   const total = job.fare.total + tip;
@@ -54,7 +93,7 @@ export default function CompleteScreen() {
             <IconSymbol name="checkmark.circle.fill" size={48} color="#10B981" />
           </View>
           <Text style={styles.heroTitle}>Service complete</Text>
-          <Text style={styles.heroSub}>{service.name} by {mechanic.name}</Text>
+          <Text style={styles.heroSub}>{service.name} by {mechanicName}</Text>
         </View>
 
         {/* Receipt */}
@@ -98,7 +137,7 @@ export default function CompleteScreen() {
 
         {/* Rating */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Rate {mechanic.name}</Text>
+          <Text style={styles.cardTitle}>Rate {mechanicName}</Text>
           <View style={styles.starsRow}>
             {[1, 2, 3, 4, 5].map((s) => (
               <Pressable
@@ -131,7 +170,7 @@ export default function CompleteScreen() {
         </View>
 
         <View style={{ paddingHorizontal: 20, marginTop: 12 }}>
-          <Avatar name={mechanic.name} url={mechanic.photoUrl} size={48} />
+          <Avatar name={mechanicName} url={mechanicPhotoUrl ?? undefined} size={48} />
         </View>
       </ScrollView>
 

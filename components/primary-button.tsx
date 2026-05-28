@@ -2,7 +2,7 @@ import { Pressable, Text, ActivityIndicator, View, type PressableProps } from "r
 import { haptic } from "@/lib/haptics";
 import { cn } from "@/lib/utils";
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "danger" | "warm";
 
 export interface PrimaryButtonProps extends Omit<PressableProps, "style"> {
   title: string;
@@ -20,6 +20,7 @@ const VARIANT_STYLES: Record<Variant, { bg: string; text: string; border?: strin
   secondary: { bg: "transparent", text: "#0F172A", border: "#E2E8F0" },
   ghost: { bg: "transparent", text: "#F97316" },
   danger: { bg: "#EF4444", text: "#FFFFFF" },
+  warm: { bg: "#FB923C", text: "#FFFFFF", border: "#EA580C" },
 };
 
 export function PrimaryButton({

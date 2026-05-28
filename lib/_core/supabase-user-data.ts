@@ -16,8 +16,14 @@ export type UserProfile = {
   userId: string;
   email: string | null;
   full_name: string | null;
+  date_of_birth: string | null;
   bio: string | null;
   avatar_url: string | null;
+  verification_status: "pending_review" | "approved" | "rejected" | null;
+  id_document_url: string | null;
+  certification_document_url: string | null;
+  mechanic_attested_no_criminal_record: boolean | null;
+  mechanic_attested_at: string | null;
   role: "customer" | "mechanic" | null;
   completed_at: string | null;
   created_at: string;
@@ -31,8 +37,15 @@ function mapDbRowToProfile(row: Record<string, unknown>): UserProfile {
     userId: String(row.user_id ?? row.userId ?? ""),
     email: (row.email as string) ?? null,
     full_name: (row.full_name as string) ?? (row.name as string) ?? null,
+    date_of_birth: (row.date_of_birth as string) ?? null,
     bio: (row.bio as string) ?? null,
     avatar_url: (row.avatar_url as string) ?? (row.photo_url as string) ?? null,
+    verification_status: (row.verification_status as UserProfile["verification_status"]) ?? null,
+    id_document_url: (row.id_document_url as string) ?? null,
+    certification_document_url: (row.certification_document_url as string) ?? null,
+    mechanic_attested_no_criminal_record:
+      (row.mechanic_attested_no_criminal_record as boolean) ?? null,
+    mechanic_attested_at: (row.mechanic_attested_at as string) ?? null,
     role: (row.role as UserProfile["role"]) ?? null,
     completed_at: (row.completed_at as string) ?? null,
     created_at: String(row.created_at ?? ""),
@@ -49,11 +62,17 @@ function mapAppUpdatesToDb(
     // Live Supabase schema uses full_name + avatar_url (not name / photo_url)
     if (
       key === "full_name" ||
+      key === "date_of_birth" ||
       key === "avatar_url" ||
       key === "bio" ||
       key === "role" ||
       key === "email" ||
-      key === "completed_at"
+      key === "completed_at" ||
+      key === "verification_status" ||
+      key === "id_document_url" ||
+      key === "certification_document_url" ||
+      key === "mechanic_attested_no_criminal_record" ||
+      key === "mechanic_attested_at"
     ) {
       db[key] = v;
     }
@@ -68,9 +87,16 @@ export type UserVehicle = {
   year: number;
   make: string;
   model: string;
+  trim?: string | null;
+  engine_size?: string | null;
+  transmission_type?: "automatic" | "manual" | "cvt" | "dct" | "other" | null;
+  drivetrain?: "AWD" | "FWD" | "RWD" | "4WD" | null;
   color: string | null;
   plate: string | null;
   isActive: boolean;
+  insurance_doc_url?: string | null;
+  registration_sticker_url?: string | null;
+  approval_status?: "pending" | "approved" | "rejected" | null;
   created_at: string;
   updated_at: string;
 };
@@ -86,6 +112,22 @@ class SupabaseUserDataClient {
     if (!this.supabaseUrl || !this.supabaseKey) {
       console.error("[SupabaseUserData] CRITICAL: Missing Supabase credentials!");
     }
+  }
+
+  private isOptionalVehicleColumnMissing(errorLike: { code?: string; message?: string; details?: unknown }): boolean {
+    const code = String(errorLike?.code ?? "");
+    if (code !== "PGRST204") return false;
+    const msg = String(errorLike?.message ?? "").toLowerCase();
+    const detailMsg = String(
+      (errorLike?.details as { message?: string } | undefined)?.message ?? ""
+    ).toLowerCase();
+    const haystack = `${msg} ${detailMsg}`;
+    return (
+      haystack.includes("drivetrain") ||
+      haystack.includes("engine_size") ||
+      haystack.includes("transmission_type") ||
+      haystack.includes("trim")
+    );
   }
 
   /**
@@ -121,7 +163,16 @@ class SupabaseUserDataClient {
 
       if (!response.ok) {
         const error = await response.json();
-        console.error(`[SupabaseUserData] API Error: ${response.status}`, error);
+        const expectedOptionalMissing = this.isOptionalVehicleColumnMissing({
+          code: error?.code,
+          message: error?.message,
+          details: error,
+        });
+        if (expectedOptionalMissing) {
+          console.warn(`[SupabaseUserData] Optional vehicle column missing (schema not migrated yet).`);
+        } else {
+          console.error(`[SupabaseUserData] API Error: ${response.status}`, error);
+        }
 
         const wrapped = {
           code: error.code || `http_${response.status}`,
@@ -162,8 +213,12 @@ class SupabaseUserDataClient {
       const errorCode = error?.code || 'unknown';
       const errorMsg = error?.message || 'Unknown error';
       
-      // Log detailed error info for debugging
-      console.error(`[SupabaseUserData] API call failed (${errorCode}):`, errorMsg);
+      // Avoid noisy RedBox for known optional-column fallback path.
+      if (this.isOptionalVehicleColumnMissing(error)) {
+        console.warn(`[SupabaseUserData] API call fallback: ${errorMsg}`);
+      } else {
+        console.error(`[SupabaseUserData] API call failed (${errorCode}):`, errorMsg);
+      }
       
       // Re-throw with enhanced context
       throw {
@@ -197,18 +252,36 @@ class SupabaseUserDataClient {
         return mapDbRowToProfile(profiles[0]);
       }
 
-      const newProfile = await this.apiCall(
-        "/user_profiles",
-        "POST",
-        {
-          user_id: userId,
-          role,
-          full_name: null,
-          bio: null,
-          avatar_url: null,
-        },
-        currentToken
-      );
+      let newProfile: any;
+      try {
+        newProfile = await this.apiCall(
+          "/user_profiles",
+          "POST",
+          {
+            user_id: userId,
+            role,
+            full_name: null,
+            bio: null,
+            avatar_url: null,
+          },
+          currentToken
+        );
+      } catch (createErr: any) {
+        // Another in-flight request already created this profile.
+        const code = createErr?.code ?? createErr?.details?.code;
+        if (String(code) === "23505") {
+          const retryProfiles = await this.apiCall(
+            `/user_profiles?user_id=eq.${userId}`,
+            "GET",
+            undefined,
+            currentToken
+          );
+          if (Array.isArray(retryProfiles) && retryProfiles.length > 0) {
+            return mapDbRowToProfile(retryProfiles[0]);
+          }
+        }
+        throw createErr;
+      }
 
       const row = Array.isArray(newProfile) ? newProfile[0] : newProfile;
       return row ? mapDbRowToProfile(row) : mapDbRowToProfile({ user_id: userId, role });
@@ -258,15 +331,33 @@ class SupabaseUserDataClient {
       
       // If update returned no rows, profile doesn't exist - create it
       console.log("[SupabaseUserData] Profile doesn't exist, creating new one");
-      const createResult = await this.apiCall(
-        "/user_profiles",
-        "POST",
-        {
-          user_id: userId,
-          ...cleanUpdates,
-        },
-        currentToken
-      );
+      let createResult: any;
+      try {
+        createResult = await this.apiCall(
+          "/user_profiles",
+          "POST",
+          {
+            user_id: userId,
+            ...cleanUpdates,
+          },
+          currentToken
+        );
+      } catch (createErr: any) {
+        // Another caller created profile first; refetch and continue.
+        const code = createErr?.code ?? createErr?.details?.code;
+        if (String(code) === "23505") {
+          const retryProfiles = await this.apiCall(
+            `/user_profiles?user_id=eq.${userId}`,
+            "GET",
+            undefined,
+            currentToken
+          );
+          if (Array.isArray(retryProfiles) && retryProfiles.length > 0) {
+            return mapDbRowToProfile(retryProfiles[0]);
+          }
+        }
+        throw createErr;
+      }
 
       // Handle various response formats from Supabase
       if (createResult && createResult.length > 0) {
@@ -333,6 +424,10 @@ class SupabaseUserDataClient {
         year: vehicle.year,
         make: vehicle.make,
         model: vehicle.model,
+        trim: vehicle.trim || null,
+        engine_size: vehicle.engineSize || null,
+        transmission_type: vehicle.transmissionType || null,
+        drivetrain: vehicle.drivetrain || null,
         color: vehicle.color || null,
         plate: vehicle.plate || null,
         is_active: false,
@@ -341,12 +436,44 @@ class SupabaseUserDataClient {
       console.log("[SupabaseUserData] ➤ Adding vehicle to user_vehicles table");
       console.log("[SupabaseUserData] Payload:", JSON.stringify(payload, null, 2));
 
-      const result = await this.apiCall(
-        "/user_vehicles",
-        "POST",
-        payload,
-        currentToken
-      );
+      let result: any;
+      try {
+        result = await this.apiCall(
+          "/user_vehicles",
+          "POST",
+          payload,
+          currentToken
+        );
+      } catch (err: any) {
+        const msg = String(err?.message || "");
+        const detail = String(err?.details?.message || "");
+        const missingNewColumns =
+          msg.includes("engine_size") ||
+          msg.includes("transmission_type") ||
+          msg.includes("drivetrain") ||
+          msg.includes("trim") ||
+          detail.includes("engine_size") ||
+          detail.includes("transmission_type") ||
+          detail.includes("drivetrain") ||
+          detail.includes("trim");
+        if (!missingNewColumns) throw err;
+        // Backward-compatible retry for schemas without the new optional columns.
+        result = await this.apiCall(
+          "/user_vehicles",
+          "POST",
+          {
+            user_id: userId,
+            nickname: vehicle.nickname,
+            year: vehicle.year,
+            make: vehicle.make,
+            model: vehicle.model,
+            color: vehicle.color || null,
+            plate: vehicle.plate || null,
+            is_active: false,
+          },
+          currentToken
+        );
+      }
 
       console.log("[SupabaseUserData] Response received:", JSON.stringify(result, null, 2));
       console.log("[SupabaseUserData] Response type:", typeof result, "IsArray:", Array.isArray(result));
@@ -398,12 +525,54 @@ class SupabaseUserDataClient {
   ): Promise<UserVehicle> {
     try {
       const currentToken = await ensureValidAccessToken(sessionToken);
-      const result = await this.apiCall(
-        `/user_vehicles?id=eq.${vehicleId}&user_id=eq.${userId}`,
-        "PATCH",
-        updates,
-        currentToken
-      );
+      const mappedUpdates: Record<string, unknown> = {
+        nickname: updates.nickname,
+        year: updates.year,
+        make: updates.make,
+        model: updates.model,
+        trim: updates.trim,
+        engine_size: updates.engineSize,
+        transmission_type: updates.transmissionType,
+        drivetrain: updates.drivetrain,
+        color: updates.color,
+        plate: updates.plate,
+      };
+      const compact = Object.fromEntries(Object.entries(mappedUpdates).filter(([, v]) => v !== undefined));
+      let result: any;
+      try {
+        result = await this.apiCall(
+          `/user_vehicles?id=eq.${vehicleId}&user_id=eq.${userId}`,
+          "PATCH",
+          compact,
+          currentToken
+        );
+      } catch (err: any) {
+        const msg = String(err?.message || "");
+        const detail = String(err?.details?.message || "");
+        const missingNewColumns =
+          msg.includes("engine_size") ||
+          msg.includes("transmission_type") ||
+          msg.includes("drivetrain") ||
+          msg.includes("trim") ||
+          detail.includes("engine_size") ||
+          detail.includes("transmission_type") ||
+          detail.includes("drivetrain") ||
+          detail.includes("trim");
+        if (!missingNewColumns) throw err;
+        result = await this.apiCall(
+          `/user_vehicles?id=eq.${vehicleId}&user_id=eq.${userId}`,
+          "PATCH",
+          {
+            nickname: updates.nickname,
+            year: updates.year,
+            make: updates.make,
+            model: updates.model,
+            color: updates.color,
+            plate: updates.plate,
+          },
+          currentToken
+        );
+      }
 
       if (result && result.length > 0) {
         return result[0];
@@ -414,6 +583,41 @@ class SupabaseUserDataClient {
       throw new Error("Failed to update vehicle: invalid response");
     } catch (error) {
       console.error("[SupabaseUserData] Failed to update vehicle:", error);
+      throw error;
+    }
+  }
+
+  async updateVehicleApproval(
+    vehicleId: string,
+    userId: string,
+    updates: {
+      insurance_doc_url?: string | null;
+      registration_sticker_url?: string | null;
+      approval_status?: "pending" | "approved" | "rejected";
+    },
+    sessionToken: string
+  ): Promise<void> {
+    try {
+      const currentToken = await ensureValidAccessToken(sessionToken);
+      await this.apiCall(
+        `/user_vehicles?id=eq.${vehicleId}&user_id=eq.${userId}`,
+        "PATCH",
+        updates,
+        currentToken
+      );
+    } catch (error: any) {
+      // If columns are not present yet, caller can gracefully fall back.
+      const msg = String(error?.message || "");
+      const detail = String(error?.details?.message || "");
+      const missingColumn =
+        msg.includes("column") ||
+        detail.includes("column") ||
+        msg.includes("approval_status") ||
+        msg.includes("insurance_doc_url") ||
+        msg.includes("registration_sticker_url");
+      if (missingColumn) {
+        throw { code: "VEHICLE_APPROVAL_COLUMNS_MISSING", message: msg || detail };
+      }
       throw error;
     }
   }
@@ -478,12 +682,65 @@ class SupabaseUserDataClient {
     try {
       const currentToken = await ensureValidAccessToken(sessionToken);
       const dbPatch = mapAppUpdatesToDb({ avatar_url });
-      const result = await this.apiCall(
-        `/user_profiles?user_id=eq.${userId}`,
-        "PATCH",
-        dbPatch,
-        currentToken
-      );
+      let result: any;
+      try {
+        result = await this.apiCall(
+          `/user_profiles?user_id=eq.${userId}`,
+          "PATCH",
+          dbPatch,
+          currentToken
+        );
+      } catch (err: any) {
+        const msg = String(err?.message || "").toLowerCase();
+        const detail = String(err?.details?.message || "").toLowerCase();
+        const missingAvatarUrl = msg.includes("avatar_url") || detail.includes("avatar_url");
+        if (!missingAvatarUrl) throw err;
+        // Legacy schema fallback
+        result = await this.apiCall(
+          `/user_profiles?user_id=eq.${userId}`,
+          "PATCH",
+          { photo_url: avatar_url },
+          currentToken
+        );
+      }
+
+      // If no existing row, create a minimal profile row with avatar_url.
+      if (!result || (Array.isArray(result) && result.length === 0)) {
+        try {
+          result = await this.apiCall(
+            "/user_profiles",
+            "POST",
+            { user_id: userId, ...dbPatch },
+            currentToken
+          );
+        } catch (createErr: any) {
+          const code = String(createErr?.code ?? createErr?.details?.code ?? "");
+          if (code === "23505") {
+            // Profile already exists (race). Retry PATCH once.
+            try {
+              result = await this.apiCall(
+                `/user_profiles?user_id=eq.${userId}`,
+                "PATCH",
+                dbPatch,
+                currentToken
+              );
+            } catch (retryErr: any) {
+              const msg = String(retryErr?.message || "").toLowerCase();
+              const detail = String(retryErr?.details?.message || "").toLowerCase();
+              const missingAvatarUrl = msg.includes("avatar_url") || detail.includes("avatar_url");
+              if (!missingAvatarUrl) throw retryErr;
+              result = await this.apiCall(
+                `/user_profiles?user_id=eq.${userId}`,
+                "PATCH",
+                { photo_url: avatar_url },
+                currentToken
+              );
+            }
+          } else {
+            throw createErr;
+          }
+        }
+      }
 
       if (result && result.length > 0) {
         return mapDbRowToProfile(result[0]);

@@ -3,9 +3,10 @@ import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ScreenContainer } from "@/components/screen-container";
 import { useActiveJob, useStore } from "@/lib/store";
-import { getMechanic, getServiceType } from "@/lib/seed";
+import { getServiceType } from "@/lib/seed";
 import { LiveMap } from "@/components/live-map";
 import { interpolate } from "@/lib/geo";
+import { haversineMeters, metersToMiles } from "@/lib/geo";
 import { Avatar } from "@/components/avatar";
 import { RatingStars } from "@/components/rating-stars";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -15,6 +16,9 @@ import { notifyNow, ensureNotificationPermissions } from "@/lib/notifications";
 import type { JobStatus } from "@/lib/types";
 import { useLocaleContext } from "@/hooks/use-locale";
 import { localizedServiceName } from "@/lib/service-i18n";
+import { fetchServiceMessages, assignDispatchToMechanic, updateDispatchStatus } from "@/lib/live-dispatch";
+import { useAuth } from "@/lib/auth-context";
+import { resolveAuthSession } from "@/lib/resolve-auth-session";
 
 // Status flow with simulated durations (ms)
 const FLOW: { status: JobStatus; duration: number }[] = [
@@ -29,10 +33,36 @@ export default function TrackingScreen() {
   const router = useRouter();
   const job = useActiveJob();
   const { dispatch } = useStore();
+  const { user } = useAuth();
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const matchedShownForJobRef = useRef<string | null>(null);
   const [elapsedEnroute, setElapsedEnroute] = useState(0);
+  const [offer, setOffer] = useState<{
+    mechanicUserId: string;
+    mechanicName: string;
+    proposedTotal: number;
+    note?: string;
+  } | null>(null);
 
-  const mechanic = job ? getMechanic(job.mechanicId) : undefined;
+  const mechanic = job?.mechanicName
+    ? {
+        id: job.mechanicId || "assigned",
+        name: job.mechanicName,
+        photoUrl: job.mechanicPhotoUrl ?? "",
+        rating: 4.9,
+        jobsCompleted: 0,
+        yearsExperience: 5,
+        hourlyRate: 0,
+        etaMinutes: 12,
+        distanceMiles: 1.8,
+        vehicle: "Service Vehicle",
+        bio: "",
+        specialties: [],
+        certifications: [],
+        reviews: [],
+        offsetMeters: { east: 250, north: 220 },
+      }
+    : undefined;
   const service = job ? getServiceType(job.service) : undefined;
   const { t, locale } = useLocaleContext();
 
@@ -41,8 +71,22 @@ export default function TrackingScreen() {
     ensureNotificationPermissions();
   }, []);
 
+  // Show a mechanic profile modal when the match is accepted.
+  useEffect(() => {
+    if (!job?.id) return;
+    if (job.status === "accepted" && mechanic && matchedShownForJobRef.current !== job.id) {
+      matchedShownForJobRef.current = job.id;
+      router.push("/mechanic/matched" as any);
+      return;
+    }
+    if (job.status === "cancelled" || job.status === "completed") {
+      matchedShownForJobRef.current = null;
+    }
+  }, [job?.id, job?.status, mechanic, router]);
+
   // Drive the state machine
   useEffect(() => {
+    if (job?.remoteRequestId) return;
     if (!job) return;
     // Cancel earlier timers
     timersRef.current.forEach((t) => clearTimeout(t));
@@ -78,6 +122,76 @@ export default function TrackingScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.status, job?.id]);
 
+  // Live dispatch polling moved to global CustomerLiveJobSync to avoid duplicate network loops.
+  useEffect(() => {
+    if (!job?.remoteRequestId || !user?.id || job.status !== "searching") {
+      setOffer(null);
+      return;
+    }
+    let alive = true;
+    const load = async () => {
+      try {
+        const resolved = await resolveAuthSession(user);
+        if (!resolved || !alive) return;
+        const rows = await fetchServiceMessages(resolved.sessionToken, job.remoteRequestId!);
+        const latest = [...rows].reverse().find((m) => m.message.startsWith("OFFER_JSON:"));
+        if (!latest) return;
+        const raw = latest.message.slice("OFFER_JSON:".length);
+        const parsed = JSON.parse(raw) as {
+          mechanic_user_id?: string;
+          mechanic_name?: string;
+          proposed_total?: number;
+          note?: string;
+        };
+        if (!parsed.mechanic_user_id || !parsed.mechanic_name || !parsed.proposed_total) return;
+        setOffer({
+          mechanicUserId: parsed.mechanic_user_id,
+          mechanicName: parsed.mechanic_name,
+          proposedTotal: Number(parsed.proposed_total),
+          note: parsed.note,
+        });
+      } catch (err) {
+        console.warn("[Tracking] offer polling failed:", err);
+      }
+    };
+    void load();
+    const t = setInterval(() => void load(), 7000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [job?.remoteRequestId, job?.status, user?.id]);
+
+  const handleAcceptOffer = async () => {
+    if (!job?.id || !job.remoteRequestId || !offer || !user?.id) return;
+    try {
+      const resolved = await resolveAuthSession(user);
+      if (!resolved) return;
+      try {
+        await assignDispatchToMechanic(
+          resolved.sessionToken,
+          job.remoteRequestId,
+          offer.mechanicUserId,
+          offer.mechanicName,
+        );
+      } catch (err) {
+        console.warn("[Tracking] assign offer failed, continuing local transition:", err);
+      }
+      dispatch({
+        type: "UPDATE_JOB_ASSIGNMENT",
+        payload: { id: job.id, mechanicId: offer.mechanicUserId, mechanicName: offer.mechanicName },
+      });
+      dispatch({
+        type: "UPDATE_JOB_STATUS",
+        payload: { id: job.id, status: "accepted" },
+      });
+      haptic.success();
+    } catch (error) {
+      console.error("[Tracking] accept offer failed:", error);
+      haptic.error();
+    }
+  };
+
   // Tick down enroute ETA
   useEffect(() => {
     if (!job || job.status !== "enroute") {
@@ -92,7 +206,7 @@ export default function TrackingScreen() {
     return () => clearInterval(id);
   }, [job?.status, job?.id]);
 
-  if (!job || !mechanic || !service) {
+  if (!job || !service) {
     return (
       <ScreenContainer>
         <View style={styles.emptyWrap}>
@@ -111,37 +225,48 @@ export default function TrackingScreen() {
     );
   }
 
-  // Compute display ETA
-  const liveEta = Math.max(0, mechanic.etaMinutes - Math.floor(elapsedEnroute / 60));
+  // Compute display ETA from live distance (shared reality for customer/mechanic).
+  const liveMechanicPoint = job.mechanicLiveCoords ?? computeMechanicLive(job, elapsedEnroute);
+  const liveEta = estimateEtaMinutes(liveMechanicPoint, job.pickup ?? null);
 
   const handleCall = () => {
     haptic.light();
     if (Platform.OS === "web") {
-      console.log("Pretending to call", mechanic.name);
+      console.log("Pretending to call", mechanic?.name ?? "mechanic");
     } else {
-      Alert.alert("Call mechanic", `Calling ${mechanic.name}…`, [{ text: "OK" }]);
+      Alert.alert("Call mechanic", `Calling ${mechanic?.name ?? "your mechanic"}…`, [{ text: "OK" }]);
     }
   };
   const handleMessage = () => {
     haptic.light();
-    if (Platform.OS === "web") {
-      console.log("Pretending to message", mechanic.name);
-    } else {
-      Alert.alert("Message", `Send a message to ${mechanic.name}.`, [{ text: "OK" }]);
-    }
+    if (!job.remoteRequestId) return;
+    router.push({
+      pathname: "/messages" as any,
+      params: { requestId: job.remoteRequestId, peerName: mechanic?.name ?? "Mechanic" },
+    } as any);
   };
   const handleCancel = () => {
-    const confirm = () => {
+    const confirm = async () => {
       haptic.warning();
+      if (job.remoteRequestId && user?.id) {
+        try {
+          const resolved = await resolveAuthSession(user);
+          if (resolved) {
+            await updateDispatchStatus(resolved.sessionToken, job.remoteRequestId, "cancelled");
+          }
+        } catch (error) {
+          console.error("[Tracking] Failed to cancel remote request:", error);
+        }
+      }
       dispatch({ type: "UPDATE_JOB_STATUS", payload: { id: job.id, status: "cancelled" } });
       router.replace("/(tabs)" as any);
     };
     if (Platform.OS === "web") {
       confirm();
     } else {
-      Alert.alert("Cancel service", "Are you sure you want to cancel?", [
+      Alert.alert(job.isBooked ? "Cancel booked service" : "Cancel service", "Are you sure you want to cancel?", [
         { text: "Keep job", style: "cancel" },
-        { text: "Cancel job", style: "destructive", onPress: confirm },
+        { text: "Cancel job", style: "destructive", onPress: () => void confirm() },
       ]);
     }
   };
@@ -174,8 +299,8 @@ export default function TrackingScreen() {
           <LiveMap
             status={mapStatus(job.status)}
             pickup={job.pickup ?? null}
-            mechanic={computeMechanicLive(job, elapsedEnroute)}
-            etaMinutes={job.status === "enroute" ? liveEta : mechanic.etaMinutes}
+            mechanic={liveMechanicPoint}
+            etaMinutes={job.status === "accepted" || job.status === "enroute" ? liveEta : undefined}
           />
         </View>
 
@@ -186,18 +311,47 @@ export default function TrackingScreen() {
         </View>
 
         {/* Mechanic row */}
-        <View style={styles.mechanicRow}>
-          <Avatar name={mechanic.name} url={mechanic.photoUrl} size={52} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.mechanicName}>{mechanic.name}</Text>
-            <RatingStars rating={mechanic.rating} size={11} />
-            <Text style={styles.mechanicVehicle}>{mechanic.vehicle}</Text>
+        {mechanic ? (
+          <View style={styles.mechanicRow}>
+            <Avatar name={mechanic.name} url={mechanic.photoUrl} size={52} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.mechanicName}>{mechanic.name}</Text>
+              <RatingStars rating={mechanic.rating} size={11} />
+              <Text style={styles.mechanicVehicle}>{mechanic.vehicle}</Text>
+            </View>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <ActionBtn icon="phone.fill" onPress={handleCall} />
+              <ActionBtn icon="message.fill" onPress={handleMessage} />
+            </View>
           </View>
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <ActionBtn icon="phone.fill" onPress={handleCall} />
-            <ActionBtn icon="message.fill" onPress={handleMessage} />
+        ) : (
+          <View style={styles.mechanicRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.mechanicName}>Finding your mechanic…</Text>
+              <Text style={styles.mechanicVehicle}>You’ll see profile details as soon as one accepts.</Text>
+            </View>
           </View>
-        </View>
+        )}
+
+        {job.status === "searching" && offer ? (
+          <View style={{ marginHorizontal: 20, marginTop: 12, backgroundColor: "#1A1A2E", borderWidth: 1, borderColor: "#2A2A40", borderRadius: 12, padding: 12, gap: 6 }}>
+            <Text style={{ color: "#F8FAFC", fontWeight: "800", fontSize: 15 }}>
+              {locale === "es-MX" ? "Oferta de mecánico recibida" : "Mechanic offer received"}
+            </Text>
+            <Text style={{ color: "#CBD5E1", fontSize: 13 }}>
+              {(locale === "es-MX" ? "Mecánico" : "Mechanic")}: {offer.mechanicName}
+            </Text>
+            <Text style={{ color: "#FB923C", fontSize: 14, fontWeight: "800" }}>
+              {locale === "es-MX" ? "Precio final propuesto" : "Proposed final price"}: ${offer.proposedTotal.toFixed(2)}
+            </Text>
+            {offer.note ? <Text style={{ color: "#E2E8F0", fontSize: 12 }}>{offer.note}</Text> : null}
+            <PrimaryButton
+              title={locale === "es-MX" ? "Aceptar oferta" : "Accept Offer"}
+              onPress={() => void handleAcceptOffer()}
+              hapticType="success"
+            />
+          </View>
+        ) : null}
 
         {/* Timeline */}
         <View style={styles.timelineCard}>
@@ -210,7 +364,7 @@ export default function TrackingScreen() {
               <TimelineRow
                 key={f.status}
                 label={statusLabel(f.status, t as any)}
-                description={statusDescription(f.status, mechanic.name, t as any)}
+                description={statusDescription(f.status, mechanic?.name ?? "your mechanic", t as any)}
                 done={done}
                 active={active}
                 isLast={idx === FLOW.length - 1}
@@ -221,7 +375,7 @@ export default function TrackingScreen() {
 
         {/* Actions */}
         <View style={{ paddingHorizontal: 20, marginTop: 16, gap: 10 }}>
-          {job.status === "in_progress" ? (
+          {job.status === "in_progress" && !!job.mechanicMarkedDoneAt ? (
             <PrimaryButton
               title={t("tracking.cta_complete")}
               onPress={handleComplete}
@@ -229,12 +383,22 @@ export default function TrackingScreen() {
               iconRight={<IconSymbol name="checkmark" size={18} color="#FFFFFF" />}
             />
           ) : null}
-          {job.status !== "in_progress" ? (
+          {job.isBooked && job.status !== "completed" && job.status !== "cancelled" ? (
             <PrimaryButton
-              title={t("tracking.cta_cancel")}
-              variant="secondary"
+              title="Cancel booked service"
+              variant="warm"
               onPress={handleCancel}
               hapticType="medium"
+              iconRight={<IconSymbol name="xmark" size={16} color="#FFFFFF" />}
+            />
+          ) : null}
+          {!job.isBooked && job.status !== "in_progress" ? (
+            <PrimaryButton
+              title={job.status === "searching" ? "Cancel request" : t("tracking.cta_cancel")}
+              variant="warm"
+              onPress={handleCancel}
+              hapticType="medium"
+              iconRight={<IconSymbol name="xmark" size={16} color="#FFFFFF" />}
             />
           ) : null}
         </View>
@@ -303,6 +467,17 @@ function computeMechanicLive(job: { pickup?: { latitude: number; longitude: numb
   }
   // arrived / in_progress / completed
   return pickup;
+}
+
+function estimateEtaMinutes(
+  mechanicPoint: { latitude: number; longitude: number } | null,
+  pickupPoint: { latitude: number; longitude: number } | null,
+): number {
+  if (!mechanicPoint || !pickupPoint) return 12;
+  const miles = metersToMiles(haversineMeters(mechanicPoint, pickupPoint));
+  const effectiveMph = 24; // urban avg for roadside dispatch
+  const eta = Math.ceil((miles / effectiveMph) * 60);
+  return Math.max(1, eta);
 }
 
 function statusHeadline(status: JobStatus, eta: number, t: (k: string, p?: Record<string, string | number>) => string): string {

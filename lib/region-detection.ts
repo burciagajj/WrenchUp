@@ -22,12 +22,32 @@ export function isLocationDetectionInFlight(): boolean {
 export function getDeviceRegionHint(): RegionCode | null {
   try {
     const intlLocale = Intl.DateTimeFormat().resolvedOptions().locale ?? "";
-    const normalized = intlLocale.replace("_", "-").toUpperCase();
-    if (normalized.includes("MX") || normalized === "ES-MX") return "MX";
-    if (normalized.includes("US") || normalized.endsWith("-US")) return "US";
+    const normalized = intlLocale.replace("_", "-");
+    const upper = normalized.toUpperCase();
+    if (upper.includes("MX") || upper.endsWith("-MX")) return "MX";
+    if (upper.includes("US") || upper.endsWith("-US")) return "US";
+
+    // Parse locale region safely when available, e.g. "es-MX"
+    const parts = normalized.split("-");
+    const regionPart = parts[parts.length - 1]?.toUpperCase();
+    if (regionPart === "MX") return "MX";
+    if (regionPart === "US") return "US";
 
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
-    if (/Mexico/i.test(timeZone)) return "MX";
+    if (
+      /Mexico/i.test(timeZone) ||
+      /Ciudad_Juarez/i.test(timeZone) ||
+      /Monterrey/i.test(timeZone) ||
+      /Chihuahua/i.test(timeZone) ||
+      /Merida/i.test(timeZone) ||
+      /Matamoros/i.test(timeZone) ||
+      /Tijuana/i.test(timeZone) ||
+      /Mazatlan/i.test(timeZone) ||
+      /Ojinaga/i.test(timeZone) ||
+      /Hermosillo/i.test(timeZone)
+    ) {
+      return "MX";
+    }
   } catch {
     // ignore
   }
