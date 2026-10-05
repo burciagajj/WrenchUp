@@ -42,6 +42,7 @@ import { LocationAutocompleteInput } from "@/components/location-autocomplete-in
 import { regionFor } from "@/lib/geo";
 import { supabaseUserData } from "@/lib/_core/supabase-user-data";
 import { QUICK_SERVICE_BOOKING_FEE_RATE } from "@/lib/fare";
+import { CANCELLATION_FEE_USD } from "@/lib/cancellation-fee-core";
 
 const BOOKING_FEE_RATE = QUICK_SERVICE_BOOKING_FEE_RATE;
 const FALLBACK_COORDS = { latitude: 31.7619, longitude: -106.485 };
@@ -74,6 +75,7 @@ export default function BookServiceTabScreen() {
   const { user } = useAuth();
   const vehicle = useSelectedVehicle();
   const { region, locale, formatPrice, toChargeableAmount } = useLocaleContext();
+  const cancellationFeeLabel = formatPrice(CANCELLATION_FEE_USD);
   const L = useL();
   const { pickImageFromGallery } = useImagePicker();
 
@@ -886,8 +888,8 @@ export default function BookServiceTabScreen() {
             <Text style={styles.legalTitle}>{L("Service Booking Agreement & Cancellation Policy", "Acuerdo de Reserva de Servicio y Política de Cancelación")}</Text>
             <Text style={styles.legalBody}>
               {L(
-                "By tapping “Request a Mechanic” you agree:\n\n• You may cancel free before a mechanic is dispatched.\n• $19 cancellation fee if cancelled after dispatch or within 30 min of arrival.\n• No-show: charged full estimated amount or $50 (greater).\n• You authorize charges for completed work or applicable fees.\n• Prices are estimates; final cost based on diagnosis.\n\nFull terms apply. See our Terms of Service.",
-                "Al tocar “Solicitar un mecánico” aceptas:\n\n• Puedes cancelar gratis antes de que se despache un mecánico.\n• Tarifa de $19 si cancelas después del despacho o dentro de 30 min de llegada.\n• No presentación: se cobra el total estimado o $50 (el mayor).\n• Autorizas cargos por trabajo completado o tarifas aplicables.\n• Los precios son estimados; el costo final se basa en diagnóstico.\n\nAplican términos completos. Consulta nuestros Términos de Servicio."
+                `By tapping “Request a Mechanic” you agree:\n\n• You can cancel for free until your mechanic has driven a meaningful distance toward you.\n• If you cancel after they have driven at least half a mile and a quarter of their trip, a ${cancellationFeeLabel} cancellation fee is charged and paid to the mechanic. The rest of your card hold is released.\n• You authorize charges for completed work or applicable fees.\n• Prices are estimates; final cost based on diagnosis.\n\nFull terms apply. See our Terms of Service.`,
+                `Al tocar “Solicitar un mecánico” aceptas:\n\n• Puedes cancelar gratis hasta que tu mecánico haya recorrido una distancia importante hacia ti.\n• Si cancelas después de que haya recorrido al menos media milla y una cuarta parte de su trayecto, se cobra una tarifa de cancelación de ${cancellationFeeLabel} que se paga al mecánico. El resto de la retención en tu tarjeta se libera.\n• Autorizas cargos por trabajo completado o tarifas aplicables.\n• Los precios son estimados; el costo final se basa en diagnóstico.\n\nAplican términos completos. Consulta nuestros Términos de Servicio.`
               )}
             </Text>
             <Pressable

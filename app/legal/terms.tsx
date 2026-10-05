@@ -48,6 +48,21 @@ export default function TermsScreen() {
           By confirming payment, you authorize charges for services booked through the platform, including applicable
           taxes, fees, and authorized adjustments.
         </Section>
+
+        <Section title="Cancellations">
+          When you request a service, a hold is placed on your card. You can cancel for free until your mechanic has
+          driven a meaningful distance toward you. If you cancel after the mechanic has driven at least half a mile
+          and at least a quarter of their trip to you, a $5 cancellation fee (or the local-currency equivalent for
+          requests in Mexico) is charged from that hold and paid to the mechanic, and the rest of the hold is
+          released. Distance is measured from the mechanic&apos;s GPS; if it can&apos;t be measured, no fee is charged.
+          No fee applies if the mechanic cancels.
+        </Section>
+
+        <Section title="Keeping Payments on WrenchUp">
+          Jobs found through WrenchUp must be booked and paid through WrenchUp. Phone numbers, emails, and payment-app
+          details are hidden in chat. Refunds, disputes, and payout protections only cover jobs paid through the
+          app.
+        </Section>
       </ScrollView>
     </ScreenContainer>
   );
