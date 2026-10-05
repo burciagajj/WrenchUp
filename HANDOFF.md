@@ -1,3 +1,5 @@
+> **Outdated (May 2026, old "Yojitan" name and screens).** For the current state of the app see [APP_STATUS.md](APP_STATUS.md) and [docs/LOCATION_TRACKING.md](docs/LOCATION_TRACKING.md).
+
 # Yojitan — Handoff Documentation
 
 **Version:** 1.8 (Latest Checkpoint: `983a6319`)  

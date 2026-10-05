@@ -25,7 +25,10 @@ export default function PrivacyScreen() {
         <Section title="Location Data Usage">
           We use precise and approximate location data to show nearby mechanics, calculate ETA and distance, improve
           dispatch quality, and support tracking during active jobs. Location may be processed while the app is in
-          use and retained with job records for dispute resolution and safety.
+          use and retained with job records for dispute resolution and safety. If you are a mechanic and allow it,
+          your location is also collected in the background during an active job (from when you start heading to the
+          customer until the job is completed or cancelled), so the customer can see you arriving and the distance you
+          drive can be recorded for cancellation fees paid to you. Background collection stops when the job ends.
         </Section>
 
         <Section title="Third-Party Services">
