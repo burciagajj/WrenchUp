@@ -727,6 +727,23 @@ async function releaseCancelledHolds(
             : null,
         region,
       });
+      // One line per decision so a fee test (or a customer complaint) can be
+      // traced in the EAS Hosting logs: why a fee did or didn't apply, and
+      // whether the Stripe capture went through.
+      const logFeeDecision = (outcome: string, extra: Record<string, unknown> = {}) =>
+        console.info(
+          "[payment-capture-sweep] cancellation-fee",
+          JSON.stringify({
+            requestId: row.id,
+            outcome,
+            cancelledBy: row.cancelled_by_role,
+            drivenMiles: row.mechanic_distance_driven_miles,
+            ...(decision.applies
+              ? { amount: decision.amount, currency: row.currency, startMiles: +decision.startMiles.toFixed(2) }
+              : { reason: decision.reason }),
+            ...extra,
+          }),
+        );
       let feeNote: string | null = null;
       if (decision.applies) {
         const feeCapture = await captureStripePaymentIntent(
@@ -734,6 +751,7 @@ async function releaseCancelledHolds(
           stripeSecretKey,
           Math.round(decision.amount * 100),
         );
+        logFeeDecision(feeCapture.ok ? "fee_charged" : "fee_capture_failed", feeCapture.ok ? { chargeId: feeCapture.chargeId } : { error: feeCapture.error });
         if (feeCapture.ok) {
           await supabaseRest(`/service_requests?id=eq.${encodeURIComponent(row.id)}`, "PATCH", serviceKey, {
             payment_state: "released",
@@ -747,6 +765,8 @@ async function releaseCancelledHolds(
         }
         feeNote = `Cancellation fee capture failed, hold released instead: ${feeCapture.error}`;
         await flagFailedPayment(row.id, row.customer_user_id, feeNote, serviceKey);
+      } else {
+        logFeeDecision("no_fee");
       }
 
       const result = await cancelStripePaymentIntent(row.stripe_payment_intent_id, stripeSecretKey);
