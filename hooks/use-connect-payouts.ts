@@ -4,6 +4,7 @@ import * as Linking from "expo-linking";
 import { getApiUrl } from "@/lib/api-base-url";
 import { resolveAuthSession } from "@/lib/resolve-auth-session";
 import type { AuthUser } from "@/lib/auth-context";
+import { useRegion } from "@/hooks/use-locale";
 
 export type ConnectPayoutStatus = {
   accountId: string | null;
@@ -37,6 +38,9 @@ export function useConnectPayouts(user: AuthUser | null | undefined, enabled: bo
   const [openingSettings, setOpeningSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wasBackgroundedRef = useRef(false);
+  // Sent with onboarding so a new Stripe account is created in the right
+  // country (it can never be changed later).
+  const region = useRegion();
 
   const refreshStatus = useCallback(async () => {
     if (!enabled) return;
@@ -96,7 +100,7 @@ export function useConnectPayouts(user: AuthUser | null | undefined, enabled: bo
           "Content-Type": "application/json",
           Authorization: `Bearer ${resolved.sessionToken}`,
         },
-        body: JSON.stringify({ returnUrl, refreshUrl }),
+        body: JSON.stringify({ returnUrl, refreshUrl, region }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.url) {
@@ -117,7 +121,7 @@ export function useConnectPayouts(user: AuthUser | null | undefined, enabled: bo
     } finally {
       setStartingOnboarding(false);
     }
-  }, [user]);
+  }, [region, user]);
 
   // Opens the Stripe Express dashboard so an already-onboarded mechanic can
   // change their bank/card or personal details.

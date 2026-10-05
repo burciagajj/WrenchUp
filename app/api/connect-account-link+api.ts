@@ -13,6 +13,7 @@
  * pattern already used in payment-intent+api.ts and payment-capture-sweep+api.ts.
  */
 import { getNotificationServiceConfig, supabaseRest } from "@/lib/notification-service";
+import { connectAccountCountryParams, resolveConnectAccountCountry } from "@/lib/connect-account-core";
 
 type ProfileRow = {
   user_id: string;
@@ -93,8 +94,8 @@ export async function POST(request: Request) {
     // by Stripe with "Not a valid URL". We use our own https landing page
     // (app/api/connect-return+api.ts) instead, which hands the mechanic back
     // into the app, and ignore whatever the client sent — which also means a
-    // caller can't point Stripe's redirect at an arbitrary URL.
-    void body;
+    // caller can't point Stripe's redirect at an arbitrary URL. Only
+    // body.region is read (to pick the new account's country).
     const origin = publicOrigin(request);
     const returnUrl = `${origin}/api/connect-return?result=return`;
     const refreshUrl = `${origin}/api/connect-return?result=refresh`;
@@ -131,8 +132,21 @@ export async function POST(request: Request) {
     let accountId = profile.stripe_connect_account_id;
 
     if (!accountId) {
+      const presenceRows = await supabaseRest<{ region_code: string | null }[]>(
+        `/mechanic_presence?mechanic_user_id=eq.${encodeURIComponent(currentUser.id)}&select=region_code&limit=1`,
+        "GET",
+        serviceKey,
+      ).catch(() => null);
+      const country = resolveConnectAccountCountry(
+        body?.region,
+        Array.isArray(presenceRows) ? presenceRows[0]?.region_code : null,
+      );
+
       const params = new URLSearchParams();
       params.set("type", "express");
+      for (const [key, value] of Object.entries(connectAccountCountryParams(country))) {
+        params.set(key, value);
+      }
       params.set("capabilities[transfers][requested]", "true");
       params.set("business_type", "individual");
       if (profile.email || currentUser.email) params.set("email", profile.email || currentUser.email || "");
