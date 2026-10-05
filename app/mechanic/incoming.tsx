@@ -38,6 +38,8 @@ import { formatEditableMoney, normalizeEditableMoneyInput, parseEditableMoneyInp
 import { shouldAutoDeclineOnExpiry } from "@/lib/incoming-offer-core";
 import { deriveServiceAndFeeFromTotal, QUICK_SERVICE_BOOKING_FEE_RATE } from "@/lib/fare";
 import { useConnectPayouts } from "@/hooks/use-connect-payouts";
+import { useDriveEta } from "@/hooks/use-drive-eta";
+import { formatEtaMinutes } from "@/lib/route-eta-core";
 
 const COUNTDOWN_SECONDS = 60;
 
@@ -62,6 +64,9 @@ export default function IncomingJobScreen() {
   const [partsReceipt, setPartsReceipt] = useState<PickedImage | null>(null);
   const [partsSubmitting, setPartsSubmitting] = useState(false);
   const [partsProposed, setPartsProposed] = useState(false);
+  // Real driving distance/ETA from where the mechanic is now (not the
+  // straight line from the app's saved location at a fixed 24 mph).
+  const { eta: driveEta, loading: driveEtaLoading } = useDriveEta(job?.pickup, job?.mechanicStart);
   const { pickReceiptImage } = useImagePicker();
   // Gate checked in handleAccept below — a mechanic who's never finished
   // Stripe Connect onboarding would otherwise do the job and only discover
@@ -178,17 +183,18 @@ export default function IncomingJobScreen() {
   }
 
   const service = getServiceType(job.service);
-  const etaMinutes = Math.max(2, Math.ceil((job.distanceMiles / 24) * 60));
   const isBookedService = !!job.isBooked || !!job.scheduledFor;
   const customerFirstName = (job.customerName || "Customer").trim().split(/\s+/)[0] || "Customer";
   const pickupArea = toLocationArea(job.location);
   const countdownPct = (secondsLeft / COUNTDOWN_SECONDS) * 100;
   const urgencyColor = secondsLeft <= 15 ? "#EF4444" : "#F97316";
   const serviceLabel = service ? localizedServiceName(service.code, locale) : L("Service", "Servicio");
-  const distanceLabel =
-    region === "MX"
-      ? formatDistanceByRegion(job.distanceMiles, region)
-      : `${formatDistanceByRegion(job.distanceMiles, region)} away`;
+  const distanceLabel = driveEta
+    ? `${driveEta.source === "estimate" ? "~" : ""}${formatDistanceByRegion(driveEta.distanceMiles, region)}`
+    : driveEtaLoading
+      ? "…"
+      : "—";
+  const etaLabel = !driveEta && driveEtaLoading ? "…" : formatEtaMinutes(driveEta);
 
   const handleAccept = async () => {
     if (resolvedRef.current || isSubmitting) return;
@@ -340,7 +346,8 @@ export default function IncomingJobScreen() {
             region_code: region,
             service_code: job.service,
             customer_name: job.customerName,
-            eta_minutes: etaMinutes,
+            eta_minutes: driveEta?.durationMinutes ?? null,
+            eta_source: driveEta?.source ?? null,
           },
         });
       } catch (error) {
@@ -384,8 +391,12 @@ export default function IncomingJobScreen() {
             `El servicio agendado de ${job.customerName} ahora está en tus próximos trabajos.`
           )
         : L(
-            `${job.customerName} is expecting you. ETA ${Math.max(5, Math.round(job.distanceMiles * 4))} min.`,
-            `${job.customerName} te espera. ETA ${Math.max(5, Math.round(job.distanceMiles * 4))} min.`
+            driveEta
+              ? `${job.customerName} is expecting you. ETA ${formatEtaMinutes(driveEta)}.`
+              : `${job.customerName} is expecting you.`,
+            driveEta
+              ? `${job.customerName} te espera. ETA ${formatEtaMinutes(driveEta)}.`
+              : `${job.customerName} te espera.`
           ),
     });
     router.replace((bookedByRemote ? `/mechanic/booked?id=${encodeURIComponent(job.id)}` : "/mechanic/active") as any);
@@ -668,9 +679,17 @@ export default function IncomingJobScreen() {
             <StatChip
               icon="clock.fill"
               label={L("ETA", "ETA")}
-              value={`~${etaMinutes}m`}
+              value={etaLabel}
             />
           </View>
+          {driveEta?.source === "estimate" && !driveEtaLoading ? (
+            <Text style={styles.estimateNote}>
+              {L(
+                "Estimated from straight-line distance — live route unavailable.",
+                "Estimado por distancia en línea recta — ruta en vivo no disponible.",
+              )}
+            </Text>
+          ) : null}
 
           {(isBookedService || job.customerQuoteAcceptedAt) ? (
             <View style={styles.badgeRow}>
@@ -872,7 +891,7 @@ function StatChip({
   icon,
   label,
   value,
-  accent = "#0F172A",
+  accent = "#F8FAFC",
 }: {
   icon: string;
   label: string;
@@ -1001,6 +1020,7 @@ const styles = StyleSheet.create({
   vehicle: { fontSize: 14, color: "#CBD5E1", marginTop: 3, fontWeight: "600" },
   pickupHint: { fontSize: 12, color: "#94A3B8", marginTop: 4 },
   statsRow: { flexDirection: "row", gap: 8 },
+  estimateNote: { color: "#94A3B8", fontSize: 11, marginTop: 6, textAlign: "center" },
   statChip: {
     flex: 1,
     backgroundColor: "#0B1220",
