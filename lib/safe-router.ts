@@ -1,9 +1,9 @@
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
 
 /**
- * safe-router.ts (v1.1)
+ * safe-router.ts (v2)
  * Queues navigation calls until the root layout is confirmed ready.
- * Call setRouterReady() from auth-context once appReady is true.
+ * Provides properly typed navigation to avoid `as any` casts.
  */
 
 let isReady = false;
@@ -15,20 +15,24 @@ export function setRouterReady() {
   queue.length = 0;
 }
 
-export function safeReplace(href: string) {
-  const navigate = () => router.replace(href as never);
+function deferNavigate(navigate: () => void) {
+  setTimeout(navigate, 0);
+}
+
+export function safeReplace(href: Href) {
+  const navigate = () => router.replace(href);
   if (isReady) {
-    navigate();
+    deferNavigate(navigate);
   } else {
-    queue.push(navigate);
+    queue.push(() => deferNavigate(navigate));
   }
 }
 
-export function safePush(href: string) {
-  const navigate = () => router.push(href as never);
+export function safePush(href: Href) {
+  const navigate = () => router.push(href);
   if (isReady) {
-    navigate();
+    deferNavigate(navigate);
   } else {
-    queue.push(navigate);
+    queue.push(() => deferNavigate(navigate));
   }
 }

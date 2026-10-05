@@ -31,7 +31,9 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+.project-config.json
 
 # typescript
 *.tsbuildinfo
@@ -60,6 +62,7 @@ Thumbs.db
 *.tgz
 *.tar.gz
 .cache/
+package-lock.json
 
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/

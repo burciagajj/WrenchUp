@@ -32,21 +32,22 @@ describe("i18n", () => {
       expect(formatPrice(99.99, "US")).toBe("$99.99");
     });
 
-    it("applies 60% discount for MX region", () => {
-      // $100 USD → 40% of original = $40 USD → ~$700 MXN
+    it("charges 60% of the US price for MX region (40% discount)", () => {
+      // $100 USD → 60% of original = $60 USD → 1,050 MXN
       const result100 = formatPrice(100, "MX");
       expect(result100).toContain("MXN");
-      expect(result100).toContain("700");
+      expect(result100).toContain("1.050");
       const result50 = formatPrice(50, "MX");
       expect(result50).toContain("MXN");
-      expect(result50).toContain("350");
+      expect(result50).toContain("525");
     });
 
     it("formats MX prices with MXN currency symbol", () => {
       const result = formatPrice(100, "MX");
-      // Should contain MXN and be the discounted amount in pesos (~700)
+      // Should contain MXN and be the discounted amount in pesos (1.050,00)
       expect(result).toContain("MXN");
-      expect(result).toContain("700");
+      expect(result).toContain("1.050");
+      expect(result).toContain(",");
     });
   });
 

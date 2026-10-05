@@ -1,4 +1,4 @@
--- WrenchUp — Step 1: user_profiles, user_vehicles, jobs + RLS
+-- Yojitan — Step 1: user_profiles, user_vehicles, jobs + RLS
 -- Run in Supabase Dashboard → SQL Editor → New query → Run
 -- Project: https://supabase.com/dashboard/project/_/sql
 

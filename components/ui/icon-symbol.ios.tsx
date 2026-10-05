@@ -35,9 +35,10 @@ const NATIVE_SF_SYMBOLS = new Set<string>([
   "minus",
   "magnifyingglass",
   "gearshape.fill",
-  "questionmark.circle.fill",
+  // "questionmark.circle.fill" removed - replaced with context-appropriate icons (info.circle.fill, etc.)
   "arrow.right",
   "arrow.left",
+  "arrow.clockwise",
   "bolt.fill",
   "drop.fill",
   "thermometer",
@@ -58,6 +59,12 @@ const NATIVE_SF_SYMBOLS = new Set<string>([
 const FALLBACK_MAPPING: Record<string, ComponentProps<typeof MaterialIcons>["name"]> = {
   "engine.combustion.fill": "build",
   "car.side.fill": "directions-car",
+  "key.fill": "vpn-key",
+  "wheel.circle.fill": "trip-origin",
+  "drop.circle.fill": "bubble-chart",
+  "soap.fill": "soap",
+  "obd.scanner.fill": "qr-code-scanner",
+  checklist: "fact-check",
 };
 
 export function IconSymbol({
@@ -74,7 +81,7 @@ export function IconSymbol({
   weight?: SymbolWeight;
 }) {
   if (!NATIVE_SF_SYMBOLS.has(name as string)) {
-    const fallback = FALLBACK_MAPPING[name as string] ?? "build";
+    const fallback = FALLBACK_MAPPING[name as string] ?? "info"; // Better than generic help/? icon
     return <MaterialIcons name={fallback} color={color} size={size} style={style as never} />;
   }
   return (

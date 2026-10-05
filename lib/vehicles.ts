@@ -8,9 +8,9 @@ import { supabaseUserData } from "@/lib/_core/supabase-user-data";
 async function getSessionTokenFromStorage(): Promise<string | null> {
   try {
     if (Platform.OS === "web") {
-      return await AsyncStorage.getItem("wrenchup_session_token");
+      return await AsyncStorage.getItem("yojitan_session_token");
     } else {
-      return await SecureStore.getItemAsync("wrenchup_session_token");
+      return await SecureStore.getItemAsync("yojitan_session_token");
     }
   } catch (err) {
     console.error("[vehicles] Failed to get session token:", err);

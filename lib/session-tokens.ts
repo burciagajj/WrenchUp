@@ -7,9 +7,21 @@ import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-export const SESSION_TOKEN_KEY = "wrenchup_session_token";
-export const REFRESH_TOKEN_KEY = "wrenchup_refresh_token";
-export const AUTH_USER_KEY = "wrenchup_auth_user";
+export const SESSION_TOKEN_KEY = "yojitan_session_token";
+export const REFRESH_TOKEN_KEY = "yojitan_refresh_token";
+export const AUTH_USER_KEY = "yojitan_auth_user";
+
+const LEGACY_SESSION_KEYS = [
+  "wrenchup_session_token",
+  "wrenchup_refresh_token",
+  "wrenchup_auth_user",
+] as const;
+const ALL_SESSION_KEYS = [
+  SESSION_TOKEN_KEY,
+  REFRESH_TOKEN_KEY,
+  AUTH_USER_KEY,
+  ...LEGACY_SESSION_KEYS,
+] as const;
 
 let memorySessionToken: string | null = null;
 let memoryRefreshToken: string | null = null;
@@ -27,7 +39,7 @@ export function clearMemoryTokens(): void {
   memoryRefreshToken = null;
 }
 
-const SESSION_KEYS = [SESSION_TOKEN_KEY, REFRESH_TOKEN_KEY, AUTH_USER_KEY] as const;
+const SESSION_KEYS = ALL_SESSION_KEYS;
 
 /**
  * Remove all auth tokens from memory, SecureStore, and AsyncStorage.

@@ -49,7 +49,7 @@ describe("reducer", () => {
       location: "loc",
       status: "searching",
       createdAt: 1,
-      fare: { base: 1, service: 2, distance: 3, total: 6 },
+      fare: { service: 2, bookingFee: 4, total: 6 },
     };
     const next = reducer(initialState, { type: "CREATE_JOB", payload: job });
     expect(next.activeJobId).toBe("j1");
@@ -65,7 +65,7 @@ describe("reducer", () => {
       location: "loc",
       status: "in_progress",
       createdAt: 1,
-      fare: { base: 1, service: 2, distance: 3, total: 6 },
+      fare: { service: 2, bookingFee: 4, total: 6 },
     };
     const s1 = reducer(initialState, { type: "CREATE_JOB", payload: job });
     const s2 = reducer(s1, { type: "UPDATE_JOB_STATUS", payload: { id: "j1", status: "completed" } });
@@ -82,7 +82,7 @@ describe("reducer", () => {
       location: "loc",
       status: "in_progress",
       createdAt: 1,
-      fare: { base: 1, service: 2, distance: 3, total: 6 },
+      fare: { service: 2, bookingFee: 4, total: 6 },
     };
     const s1 = reducer(initialState, { type: "CREATE_JOB", payload: job });
     const s2 = reducer(s1, {

@@ -6,7 +6,7 @@ type VehicleApproval = {
   approvalStatus?: "pending" | "approved" | "rejected";
 };
 
-const keyFor = (userId: string) => `wrenchup_vehicle_approvals_v1:${userId}`;
+const keyFor = (userId: string) => `yojitan_vehicle_approvals_v1:${userId}`;
 
 export async function loadVehicleApprovals(userId: string): Promise<Record<string, VehicleApproval>> {
   try {

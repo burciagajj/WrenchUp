@@ -4,10 +4,14 @@
  * Complements existing OAuth flow without breaking it
  */
 
+import { trackAnalyticsEvent } from "@/lib/analytics";
+
 export type AuthUser = {
   id: string;
   email: string;
   role: "customer" | "mechanic";
+  fullName?: string | null;
+  displayName?: string | null;
   profileCompleted: boolean;
   emailConfirmed: boolean;
 };
@@ -16,6 +20,23 @@ export type AuthError = {
   code: string;
   message: string;
 };
+
+const AUTH_ERROR_LOG_WINDOW_MS = 5000;
+const authErrorLogCache = new Map<string, number>();
+
+function shouldLogAuthError(key: string): boolean {
+  const now = Date.now();
+  const prev = authErrorLogCache.get(key) ?? 0;
+  if (now - prev < AUTH_ERROR_LOG_WINDOW_MS) return false;
+  authErrorLogCache.set(key, now);
+  return true;
+}
+
+function getAuthUserFromResponse(response: any): any | null {
+  if (response?.user?.id) return response.user;
+  if (response?.id && response?.email) return response;
+  return null;
+}
 
 class SupabaseAuthClient {
   private supabaseUrl: string;
@@ -78,11 +99,19 @@ class SupabaseAuthClient {
       if (!response.ok) {
         const errorCode = data.error_code || data.error || "unknown_error";
         const errorMsg = data.message || data.error_description || data.msg || "Authentication failed";
-        console.error(`[SupabaseAuth] API Error: ${errorCode}`);
-        console.error("  Message:", errorMsg);
-        console.error("  Full Error Object:", data);
+        const logKey = `${endpoint}|${errorCode}|${response.status}`;
+        if (shouldLogAuthError(logKey)) {
+          console.error(`[SupabaseAuth] API Error (${response.status}/${errorCode}): ${errorMsg}`);
+        }
 
         // Backoff + retry on Supabase auth throttling
+        if (response.status === 429 && errorCode === "over_email_send_rate_limit") {
+          throw {
+            code: errorCode,
+            message: "Verification email limit reached. Please wait a minute, then try again.",
+          };
+        }
+
         if (response.status === 429 && attempt < 3) {
           const retryAfterHeader = response.headers.get("retry-after");
           const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : NaN;
@@ -105,10 +134,19 @@ class SupabaseAuthClient {
 
       return data;
     } catch (error: any) {
-      console.error("[SupabaseAuth] API call failed:", error);
-      console.error("  Error Code:", error?.code);
-      console.error("  Error Message:", error?.message);
-      console.error("  Full Error:", error);
+      const key = `${endpoint}|${error?.code || "unknown"}|${error?.message || "unknown"}`;
+      if (shouldLogAuthError(key)) {
+        console.error(`[SupabaseAuth] API call failed: ${error?.message || "Unknown error"}`);
+      }
+      void trackAnalyticsEvent({
+        eventName: "auth_failed",
+        properties: {
+          endpoint,
+          method,
+          code: error?.code || "unknown",
+          message: error?.message || "Unknown auth error",
+        },
+      });
       throw error;
     }
   }
@@ -137,14 +175,16 @@ class SupabaseAuthClient {
         data: { role, profileCompleted: false },
       });
 
+      const signupUser = getAuthUserFromResponse(response);
+
       console.log("[SupabaseAuth] Sign-up response received:", {
-        hasUser: !!response.user,
-        userId: response.user?.id,
-        email: response.user?.email,
+        hasUser: !!signupUser,
+        userId: signupUser?.id,
+        email: signupUser?.email,
         hasSession: !!response.session,
       });
 
-      if (!response.user) {
+      if (!signupUser) {
         const errorMsg = response.error_description || response.message || "Failed to create account";
         console.error("[SupabaseAuth] No user in response:", response);
         throw {
@@ -153,10 +193,10 @@ class SupabaseAuthClient {
         };
       }
 
-      const emailConfirmed = response.user?.email_confirmed_at !== null;
+      const emailConfirmed = signupUser?.email_confirmed_at !== null;
       console.log("[SupabaseAuth] Sign-up successful:", {
-        userId: response.user.id,
-        email: response.user.email,
+        userId: signupUser.id,
+        email: signupUser.email,
         emailConfirmed,
       });
 
@@ -167,9 +207,11 @@ class SupabaseAuthClient {
         response.session?.refresh_token || response.refresh_token;
 
       const authUser: AuthUser = {
-        id: response.user.id,
-        email: response.user.email,
+        id: signupUser.id,
+        email: signupUser.email,
         role,
+        fullName: null,
+        displayName: null,
         profileCompleted: false,
         emailConfirmed,
       };
@@ -207,6 +249,68 @@ class SupabaseAuthClient {
     }
   }
 
+  async signUpForVerification(
+    email: string,
+    password: string,
+    role: "customer" | "mechanic",
+    identity?: { fullName?: string; displayName?: string }
+  ): Promise<AuthUser> {
+    try {
+      console.log("[SupabaseAuth] Starting verification-only sign-up for:", email);
+
+      if (!email || !password) {
+        throw {
+          code: "invalid_input",
+          message: "Email and password are required",
+        };
+      }
+
+      const metadata = {
+        role,
+        profileCompleted: false,
+        full_name: identity?.fullName,
+        display_name: identity?.displayName,
+      };
+
+      const response = await this.apiCall("/signup", "POST", {
+        email,
+        password,
+        data: metadata,
+      });
+
+      const signupUser = getAuthUserFromResponse(response);
+
+      if (!signupUser) {
+        const errorMsg = response.error_description || response.message || "Failed to create account";
+        console.error("[SupabaseAuth] No user in verification-only response:", response);
+        throw {
+          code: response.error_code || "signup_failed",
+          message: errorMsg,
+        };
+      }
+
+      return {
+        id: signupUser.id,
+        email: signupUser.email,
+        role,
+        fullName: identity?.fullName ?? null,
+        displayName: identity?.displayName ?? identity?.fullName ?? null,
+        profileCompleted: false,
+        emailConfirmed: signupUser?.email_confirmed_at !== null,
+      };
+    } catch (error: any) {
+      console.error("[SupabaseAuth] Verification-only sign-up failed:", {
+        code: error?.code,
+        message: error?.message,
+        fullError: error,
+      });
+      throw {
+        code: error?.code || "signup_failed",
+        message: error?.message || "Failed to create account",
+      };
+    }
+  }
+
   async signIn(email: string, password: string): Promise<{ user: AuthUser; session: string; refreshToken?: string }> {
     try {
       const response = await this.apiCall("/token?grant_type=password", "POST", {
@@ -223,14 +327,49 @@ class SupabaseAuthClient {
       }
 
       const role = response.user.user_metadata?.role || "customer";
-      const profileCompleted = response.user.user_metadata?.profileCompleted || false;
+      const fullName = response.user.user_metadata?.full_name || null;
+      const displayName = response.user.user_metadata?.display_name || fullName;
+      let profileCompleted = response.user.user_metadata?.profileCompleted || false;
       const emailConfirmed = response.user?.email_confirmed_at !== null;
+
+      // user_metadata.profileCompleted is written by a multi-step client flow
+      // (docs upload -> profile save -> mark complete) that can partially
+      // fail partway through, leaving it permanently false even though the
+      // user_profiles row (the actual source of truth, e.g. after an admin
+      // approves a mechanic) shows the profile is genuinely done. Fall back
+      // to the DB signal so a stuck flag can't loop someone back into
+      // onboarding forever, and self-heal the metadata so this only costs
+      // one extra request per affected account.
+      if (!profileCompleted && response.access_token) {
+        try {
+          const profileRes = await fetch(
+            `${this.supabaseUrl}/rest/v1/user_profiles?user_id=eq.${response.user.id}&select=completed_at,verification_status`,
+            {
+              headers: {
+                apikey: this.supabaseKey,
+                Authorization: `Bearer ${response.access_token}`,
+              },
+            },
+          );
+          const rows = profileRes.ok ? await profileRes.json().catch(() => []) : [];
+          const row = Array.isArray(rows) ? rows[0] : null;
+          const dbSaysComplete = Boolean(row?.completed_at) || row?.verification_status === "approved";
+          if (dbSaysComplete) {
+            profileCompleted = true;
+            void this.updateUserMetadataWithToken(response.access_token, { profileCompleted: true }).catch(() => {});
+          }
+        } catch {
+          // Non-fatal — sign-in proceeds with the metadata-only value.
+        }
+      }
 
       return {
         user: {
           id: response.user.id,
           email: response.user.email,
           role,
+          fullName,
+          displayName,
           profileCompleted,
           emailConfirmed,
         },
@@ -298,6 +437,38 @@ class SupabaseAuthClient {
     }
   }
 
+  async requestPhoneOtp(phone: string): Promise<void> {
+    try {
+      await this.apiCall("/otp", "POST", {
+        phone,
+        channel: "sms",
+        create_user: false,
+      });
+    } catch (error: any) {
+      console.error("[SupabaseAuth] Phone OTP request failed:", error);
+      throw {
+        code: error?.code || "phone_otp_failed",
+        message: error?.message || "Could not send phone verification code",
+      };
+    }
+  }
+
+  async verifyPhoneOtp(phone: string, token: string): Promise<void> {
+    try {
+      await this.apiCall("/verify", "POST", {
+        phone,
+        token,
+        type: "sms",
+      });
+    } catch (error: any) {
+      console.error("[SupabaseAuth] Phone OTP verification failed:", error);
+      throw {
+        code: error?.code || "phone_verify_failed",
+        message: error?.message || "Could not verify phone code",
+      };
+    }
+  }
+
   async updateUserMetadata(userId: string, metadata: Record<string, unknown>): Promise<void> {
     try {
       const token = await this.getSessionToken();
@@ -325,6 +496,36 @@ class SupabaseAuthClient {
       }
     } catch (error) {
       console.error("[SupabaseAuth] Update metadata failed:", error);
+      throw error;
+    }
+  }
+
+  async updateUserMetadataWithToken(sessionToken: string, metadata: Record<string, unknown>): Promise<void> {
+    try {
+      if (!sessionToken) {
+        throw { code: "no_session", message: "No active session" };
+      }
+
+      const url = `${this.supabaseUrl}/auth/v1/user`;
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: this.supabaseKey,
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ data: metadata }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw {
+          code: error.error_code || "update_failed",
+          message: error.message || "Failed to update profile",
+        };
+      }
+    } catch (error) {
+      console.error("[SupabaseAuth] Update metadata with token failed:", error);
       throw error;
     }
   }
@@ -392,6 +593,8 @@ class SupabaseAuthClient {
         id: supabaseUser.id,
         email: supabaseUser.email || "",
         role: metadata.role || "customer",
+        fullName: metadata.full_name || null,
+        displayName: metadata.display_name || metadata.full_name || null,
         profileCompleted: metadata.profileCompleted || false,
         emailConfirmed: supabaseUser.email_confirmed_at !== null,
       };

@@ -12,8 +12,8 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const systemScheme = useSystemColorScheme() ?? "light";
-  const [colorScheme, setColorSchemeState] = useState<ColorScheme>(systemScheme);
+  const systemScheme = useSystemColorScheme() ?? "dark";
+  const [colorScheme, setColorSchemeState] = useState<ColorScheme>("dark");
 
   const applyScheme = useCallback((scheme: ColorScheme) => {
     nativewindColorScheme.set(scheme);
@@ -64,7 +64,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <ThemeContext.Provider value={value}>
-      <View style={[{ flex: 1 }, themeVariables]}>{children}</View>
+      {/* Explicit backgroundColor from the current scheme ensures no white default leaks
+          at the absolute root wrapper, even before Gesture or screen content. */}
+      <View
+        style={[
+          { flex: 1, backgroundColor: SchemeColors[colorScheme].background },
+          themeVariables,
+        ]}
+      >
+        {children}
+      </View>
     </ThemeContext.Provider>
   );
 }

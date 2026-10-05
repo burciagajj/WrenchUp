@@ -7,8 +7,9 @@ import { PaymentMethodCard } from "@/components/payment-method-card";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { useColors } from "@/hooks/use-colors";
-import { useT } from "@/hooks/use-locale";
-import { cn } from "@/lib/utils";
+import { useT, useL } from "@/hooks/use-locale";
+import { useAddCard } from "@/hooks/use-add-card";
+import { resolveAuthSession } from "@/lib/resolve-auth-session";
 
 export default function PaymentMethodsScreen() {
   const router = useRouter();
@@ -16,6 +17,8 @@ export default function PaymentMethodsScreen() {
   const { state, dispatch } = useStore();
   const { user } = useAuth();
   const t = useT();
+  const L = useL();
+  const { addCard, loading: addingCard } = useAddCard();
 
   const handleSelectDefault = (methodId: string) => {
     dispatch({
@@ -40,29 +43,42 @@ export default function PaymentMethodsScreen() {
     ]);
   };
 
-  const handleAddCard = () => {
-    const testCard = {
-      id: `pm_test_4242_${Date.now()}`,
+  const handleAddCard = async () => {
+    const resolved = await resolveAuthSession(user, (err) => {
+      Alert.alert(L("Couldn't add card", "No se pudo agregar la tarjeta"), err.message);
+    });
+    if (!resolved) return;
+
+    const result = await addCard(resolved.sessionToken);
+    if (result.status === "canceled") return;
+    if (result.status === "failed") {
+      Alert.alert(L("Couldn't add card", "No se pudo agregar la tarjeta"), result.message);
+      return;
+    }
+
+    const newMethod = {
+      id: result.paymentMethodId,
       type: "card" as const,
-      card: {
-        brand: "visa",
-        last4: "4242",
-        expMonth: 12,
-        expYear: 2034,
-      },
+      card: result.card,
       billingDetails: {
         name: state.userName,
-        email: user?.email?.trim() || "customer.test@wrenchup.app",
+        email: user?.email?.trim() || undefined,
       },
     };
 
-    dispatch({ type: "ADD_PAYMENT_METHOD", payload: testCard });
-    dispatch({ type: "SET_DEFAULT_PAYMENT_METHOD", payload: testCard.id });
-    Alert.alert("Test card added", "Visa •••• 4242 is now your default payment method.");
+    dispatch({ type: "ADD_PAYMENT_METHOD", payload: newMethod });
+    dispatch({ type: "SET_DEFAULT_PAYMENT_METHOD", payload: newMethod.id });
+    Alert.alert(
+      L("Card added", "Tarjeta agregada"),
+      L(
+        `${result.card.brand.toUpperCase()} •••• ${result.card.last4} is now your default payment method.`,
+        `${result.card.brand.toUpperCase()} •••• ${result.card.last4} ahora es tu método de pago predeterminado.`,
+      ),
+    );
   };
 
   return (
-    <ScreenContainer className="p-4">
+    <ScreenContainer className="p-4" showBackButton title="Payment methods">
       <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 120 }}>
         {/* Header */}
         <View className="flex-row items-center justify-between mb-6">
@@ -100,7 +116,11 @@ export default function PaymentMethodsScreen() {
 
       </ScrollView>
       <View className="absolute left-4 right-4 bottom-6">
-        <PrimaryButton title="Use Test Card (4242)" onPress={handleAddCard} />
+        <PrimaryButton
+          title={L("Add Card", "Agregar tarjeta")}
+          onPress={handleAddCard}
+          loading={addingCard}
+        />
       </View>
     </ScreenContainer>
   );

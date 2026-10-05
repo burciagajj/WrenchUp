@@ -1,3 +1,5 @@
+import { base64ToBytes } from "@/lib/_core/base64";
+
 const BUCKET_ID = "mechanic-documents";
 
 function getConfig() {
@@ -30,11 +32,15 @@ async function ensureBucket(supabaseUrl: string, serviceKey: string) {
   };
   const check = await fetch(`${supabaseUrl}/storage/v1/bucket/${BUCKET_ID}`, { headers });
   if (check.ok) return;
-  await fetch(`${supabaseUrl}/storage/v1/bucket`, {
+  const create = await fetch(`${supabaseUrl}/storage/v1/bucket`, {
     method: "POST",
     headers,
     body: JSON.stringify({ id: BUCKET_ID, name: BUCKET_ID, public: false }),
   });
+  if (!create.ok) {
+    const text = await create.text();
+    throw new Error(text || `Could not create storage bucket ${BUCKET_ID}`);
+  }
 }
 
 export async function POST(request: Request) {
@@ -48,7 +54,13 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    if (docType !== "license" && docType !== "certification") {
+    if (
+      docType !== "license" &&
+      docType !== "insurance" &&
+      docType !== "certification" &&
+      docType !== "business_license" &&
+      docType !== "parts_receipt"
+    ) {
       return Response.json({ error: "Invalid docType" }, { status: 400 });
     }
 
@@ -67,7 +79,7 @@ export async function POST(request: Request) {
 
     const extension = mimeType === "application/pdf" ? "pdf" : "jpg";
     const path = `${userId}/${docType}_${Date.now()}.${extension}`;
-    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const bytes = base64ToBytes(base64);
 
     const uploadRes = await fetch(
       `${supabaseUrl}/storage/v1/object/${BUCKET_ID}/${path}`,
@@ -84,8 +96,15 @@ export async function POST(request: Request) {
     );
 
     if (!uploadRes.ok) {
-      const err = await uploadRes.json().catch(() => ({}));
-      return Response.json({ error: err.message || "Upload failed" }, { status: 500 });
+      const text = await uploadRes.text();
+      let message = text || "Upload failed";
+      try {
+        const parsed = text ? JSON.parse(text) : null;
+        message = parsed?.message || parsed?.error || message;
+      } catch {
+        // keep raw text
+      }
+      return Response.json({ error: message }, { status: 500 });
     }
 
     return Response.json({ path });

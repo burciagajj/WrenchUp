@@ -6,6 +6,7 @@
 import { useCallback } from "react";
 import { Alert, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import * as FileSystem from "expo-file-system/legacy";
 
 export type PickedImage = {
   base64: string;
@@ -21,13 +22,14 @@ type ImagePickerOptions = {
   allowsEditing?: boolean;
   aspect?: [number, number];
   quality?: number;
+  cameraType?: ImagePicker.CameraType;
 };
 
 async function launchPicker(
   source: "library" | "camera",
   options: ImagePickerOptions = {}
 ): Promise<PickedImage | null> {
-  const { allowsEditing = true, aspect = [1, 1], quality = 0.8 } = options;
+  const { allowsEditing = true, aspect = [1, 1], quality = 0.8, cameraType } = options;
 
   if (Platform.OS !== "web") {
     if (source === "library") {
@@ -51,6 +53,7 @@ async function launchPicker(
     aspect,
     quality,
     base64: true,
+    ...(cameraType ? { cameraType } : {}),
   };
 
   const result =
@@ -64,7 +67,18 @@ async function launchPicker(
   }
 
   const asset = result.assets[0];
-  if (!asset.base64) {
+  let base64 = asset.base64 ?? null;
+  if (!base64 && asset.uri) {
+    try {
+      base64 = await FileSystem.readAsStringAsync(asset.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    } catch (error) {
+      console.error("[useImagePicker] Failed to read picked file:", error);
+    }
+  }
+
+  if (!base64) {
     console.error("[useImagePicker] No base64 data returned");
     return null;
   }
@@ -77,11 +91,11 @@ async function launchPicker(
     filename,
     width: asset.width,
     height: asset.height,
-    size: asset.base64.length,
+    size: base64.length,
   });
 
   return {
-    base64: asset.base64,
+    base64,
     mimeType,
     filename,
     width: asset.width,
@@ -97,7 +111,7 @@ export function useImagePicker() {
   );
 
   const pickImageFromCamera = useCallback(
-    () => launchPicker("camera"),
+    (options?: ImagePickerOptions) => launchPicker("camera", options),
     []
   );
 
@@ -130,10 +144,110 @@ export function useImagePicker() {
     });
   }, []);
 
+  /**
+   * Camera-only capture for the required, admin-reviewed profile photo.
+   * No gallery option is offered — this must be a live shot of the user's
+   * face, not an existing photo. Defaults to the front camera. On web there
+   * is no launchCameraAsync, so this falls back to the library picker (web
+   * builds already can't do OS-level camera capture the way native can).
+   */
+  const pickFacePhoto = useCallback((): Promise<PickedImage | null> => {
+    if (Platform.OS === "web") {
+      return launchPicker("library", { allowsEditing: true, aspect: [1, 1], quality: 0.6 });
+    }
+    return launchPicker("camera", {
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.6,
+      cameraType: ImagePicker.CameraType.front,
+    });
+  }, []);
+
+  const pickDocumentImage = useCallback((): Promise<PickedImage | null> => {
+    if (Platform.OS === "web") {
+      return launchPicker("library", { allowsEditing: false, quality: 0.9 });
+    }
+
+    return new Promise((resolve) => {
+      Alert.alert("Document Photo", "Choose a source", [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(null) },
+        {
+          text: "Take Photo",
+          onPress: async () =>
+            resolve(await launchPicker("camera", { allowsEditing: false, quality: 0.9 })),
+        },
+        {
+          text: "Choose from Gallery",
+          onPress: async () =>
+            resolve(await launchPicker("library", { allowsEditing: false, quality: 0.9 })),
+        },
+      ]);
+    });
+  }, []);
+
+  /**
+   * Camera-or-gallery capture for the symptom-checker's optional issue
+   * photo. Lower quality than pickDocumentImage — this goes straight into a
+   * base64 JSON payload to a vision API call, so it's worth keeping small.
+   */
+  const pickIssuePhoto = useCallback((): Promise<PickedImage | null> => {
+    if (Platform.OS === "web") {
+      return launchPicker("library", { allowsEditing: false, quality: 0.5 });
+    }
+
+    return new Promise((resolve) => {
+      Alert.alert("Photo of the Issue", "Choose a source", [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(null) },
+        {
+          text: "Take Photo",
+          onPress: async () =>
+            resolve(await launchPicker("camera", { allowsEditing: false, quality: 0.5 })),
+        },
+        {
+          text: "Choose from Gallery",
+          onPress: async () =>
+            resolve(await launchPicker("library", { allowsEditing: false, quality: 0.5 })),
+        },
+      ]);
+    });
+  }, []);
+
+  /**
+   * Camera-or-gallery capture for a mechanic's parts receipt (see
+   * lib/live-dispatch.ts's proposePartsCost). Higher quality than
+   * pickIssuePhoto — a receipt needs to stay legible enough to read a
+   * dollar amount off it.
+   */
+  const pickReceiptImage = useCallback((): Promise<PickedImage | null> => {
+    if (Platform.OS === "web") {
+      return launchPicker("library", { allowsEditing: false, quality: 0.85 });
+    }
+
+    return new Promise((resolve) => {
+      Alert.alert("Receipt Photo", "Choose a source", [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(null) },
+        {
+          text: "Take Photo",
+          onPress: async () =>
+            resolve(await launchPicker("camera", { allowsEditing: false, quality: 0.85 })),
+        },
+        {
+          text: "Choose from Gallery",
+          onPress: async () =>
+            resolve(await launchPicker("library", { allowsEditing: false, quality: 0.85 })),
+        },
+      ]);
+    });
+  }, []);
+
   return {
     pickImage,
     pickImageFromGallery,
     pickImageFromCamera,
     pickProfileImage,
+    pickFacePhoto,
+    pickDocumentImage,
+    pickIssuePhoto,
+    pickReceiptImage,
   };
 }

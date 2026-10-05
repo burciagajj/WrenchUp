@@ -14,6 +14,8 @@ export type SyncAuthUser = {
   id: string;
   email: string;
   role: "customer" | "mechanic";
+  fullName?: string | null;
+  displayName?: string | null;
 };
 
 function mapDbVehicleToApp(v: UserVehicle & { is_active?: boolean }): Vehicle {
@@ -43,6 +45,12 @@ function pickSelectedVehicleId(dbVehicles: (UserVehicle & { is_active?: boolean 
   return dbVehicles[0]?.id ?? null;
 }
 
+function firstName(value?: string | null): string | null {
+  const clean = value?.trim();
+  if (!clean) return null;
+  return clean.split(/\s+/)[0] ?? clean;
+}
+
 /**
  * Fetch profile and vehicles from Supabase and dispatch LOAD_USER_DATA.
  * Pass explicit authUser + sessionToken so this works immediately after sign-in
@@ -66,11 +74,34 @@ export async function syncUserDataToStore(
 
   const freshToken = await ensureValidAccessToken(sessionToken);
 
-  const profile = await supabaseUserData.getOrCreateProfile(
+  let profile = await supabaseUserData.getOrCreateProfile(
     authUser.id,
     authUser.role,
     freshToken
   );
+
+  const missingProfileFields: Record<string, string> = {};
+  if (!profile.email && authUser.email) {
+    missingProfileFields.email = authUser.email;
+  }
+  if (!profile.role && authUser.role) {
+    missingProfileFields.role = authUser.role;
+  }
+  if (!profile.full_name && authUser.fullName) {
+    missingProfileFields.full_name = authUser.fullName;
+  }
+  if (!profile.display_name && (authUser.displayName || authUser.fullName)) {
+    missingProfileFields.display_name = authUser.displayName || authUser.fullName || "";
+  }
+
+  if (Object.keys(missingProfileFields).length > 0) {
+    profile = await supabaseUserData.updateProfile(
+      authUser.id,
+      missingProfileFields,
+      freshToken,
+      authUser.email
+    );
+  }
 
   const dbVehicles = await supabaseUserData.getUserVehicles(authUser.id, freshToken);
   const hasVehicleApprovalFields = dbVehicles.some((v) =>
@@ -88,10 +119,16 @@ export async function syncUserDataToStore(
   dispatch({
     type: "LOAD_USER_DATA",
     payload: {
-      userName: profile.full_name || authUser.email,
+      userName:
+        firstName(profile.display_name) ||
+        firstName(profile.full_name) ||
+        firstName(authUser.displayName) ||
+        firstName(authUser.fullName) ||
+        authUser.email,
       vehicles,
       selectedVehicleId,
       photoUrl,
+      phoneNumber: profile.phone_number,
     },
   });
 

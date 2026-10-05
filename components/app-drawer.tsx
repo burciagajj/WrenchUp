@@ -3,6 +3,7 @@ import {
   Animated,
   Dimensions,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -12,12 +13,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Avatar } from "@/components/avatar";
 import { useAppDrawer } from "@/lib/app-drawer-context";
-import { useAuth } from "@/lib/auth-context";
-import { useClearUserData } from "@/lib/auth-context";
+import { useAuth, useClearUserData } from "@/lib/auth-context";
 import { useStore } from "@/lib/store";
 import { useLocaleContext, useT } from "@/hooks/use-locale";
 import { haptic } from "@/lib/haptics";
 import { safeReplace } from "@/lib/safe-router";
+import { useIsAdmin } from "@/hooks/use-admin-access";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
@@ -50,8 +51,10 @@ export function AppDrawer() {
   const { locale } = useLocaleContext();
   const isEs = locale === "es-MX";
   const { user, signOut } = useAuth();
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const clearUserData = useClearUserData();
+  const showBackToMechanic = user?.role === "mechanic" && state.dashboardRoleOverride === "customer";
+  const isAdmin = useIsAdmin(user);
 
   const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
@@ -101,6 +104,18 @@ export function AppDrawer() {
     }
   };
 
+  const handleBackToMechanic = () => {
+    haptic.medium();
+    closeDrawer();
+    dispatch({ type: "SET_DASHBOARD_ROLE_OVERRIDE", payload: null });
+  };
+
+  const handleOpenAdmin = () => {
+    haptic.light();
+    closeDrawer();
+    router.push("/admin" as never);
+  };
+
   return (
     <View style={[StyleSheet.absoluteFill, styles.portal]} pointerEvents="box-none">
       <Animated.View
@@ -143,58 +158,92 @@ export function AppDrawer() {
           </Pressable>
         </View>
 
-        <View style={styles.navList}>
-          {NAV_ITEMS.filter((item) => {
-            if (user?.role === "mechanic") {
-              return item.segment !== "disputes" && item.segment !== "book-service";
-            }
-            return item.segment !== "requirements" && item.segment !== "earnings" && item.segment !== "booked-requests";
-          }).map((item) => {
-            const isActive =
-              item.segment === activeSegment ||
-              (item.segment === "index" &&
-                (!activeSegment || activeSegment === "(tabs)"));
-            return (
-              <Pressable
-                key={item.href}
-                onPress={() => navigate(item)}
-                style={({ pressed }) => [
-                  styles.navItem,
-                  isActive && styles.navItemActive,
-                  pressed && styles.navItemPressed,
-                ]}
-              >
-                <View style={[styles.navIconWrap, isActive && styles.navIconWrapActive]}>
-                  <IconSymbol
-                    name={item.icon}
-                    size={22}
-                    color={isActive ? "#F97316" : "#CBD5E1"}
-                  />
-                </View>
-                <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>
-                  {t(item.labelKey)}
-                </Text>
-                {isActive ? (
-                  <View style={styles.activeBar} />
-                ) : (
-                  <IconSymbol name="chevron.right" size={16} color="#475569" />
-                )}
-              </Pressable>
-            );
-          })}
-        </View>
+        <ScrollView
+          style={styles.drawerScroll}
+          contentContainerStyle={[
+            styles.drawerScrollContent,
+            {
+              paddingBottom: Math.max(insets.bottom, 16),
+            },
+          ]}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          <View style={styles.navList}>
+            {NAV_ITEMS.filter((item) => {
+              if (user?.role === "mechanic") {
+                return item.segment !== "disputes" && item.segment !== "book-service";
+              }
+              return item.segment !== "requirements" && item.segment !== "earnings" && item.segment !== "booked-requests";
+            }).map((item) => {
+              const isActive =
+                item.segment === activeSegment ||
+                (item.segment === "index" &&
+                  (!activeSegment || activeSegment === "(tabs)"));
+              return (
+                <Pressable
+                  key={item.href}
+                  onPress={() => navigate(item)}
+                  style={({ pressed }) => [
+                    styles.navItem,
+                    isActive && styles.navItemActive,
+                    pressed && styles.navItemPressed,
+                  ]}
+                >
+                  <View style={[styles.navIconWrap, isActive && styles.navIconWrapActive]}>
+                    <IconSymbol
+                      name={item.icon}
+                      size={22}
+                      color={isActive ? "#F97316" : "#CBD5E1"}
+                    />
+                  </View>
+                  <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>
+                    {t(item.labelKey)}
+                  </Text>
+                  {isActive ? (
+                    <View style={styles.activeBar} />
+                  ) : (
+                    <IconSymbol name="chevron.right" size={16} color="#475569" />
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
 
-        <View style={styles.footer}>
-          <Pressable
-            onPress={handleLogout}
-            style={({ pressed }) => [styles.logoutBtn, pressed && styles.navItemPressed]}
-          >
-            <View style={styles.logoutIconWrap}>
-              <IconSymbol name="rectangle.portrait.and.arrow.right" size={20} color="#FCA5A5" />
-            </View>
-            <Text style={styles.logoutText}>{isEs ? "Cerrar sesión" : "Log Out"}</Text>
-          </Pressable>
-        </View>
+          <View style={styles.footer}>
+            {showBackToMechanic ? (
+              <Pressable
+                onPress={handleBackToMechanic}
+                style={({ pressed }) => [styles.roleSwitchBtn, pressed && styles.navItemPressed]}
+              >
+                <View style={styles.roleSwitchIconWrap}>
+                  <IconSymbol name="wrench.fill" size={20} color="#FB923C" />
+                </View>
+                <Text style={styles.roleSwitchText}>{isEs ? "Volver a modo mecánico" : "Back to mechanic mode"}</Text>
+              </Pressable>
+            ) : null}
+            {isAdmin ? (
+              <Pressable
+                onPress={handleOpenAdmin}
+                style={({ pressed }) => [styles.adminBtn, pressed && styles.navItemPressed]}
+              >
+                <View style={styles.adminIconWrap}>
+                  <IconSymbol name="shield.fill" size={20} color="#F97316" />
+                </View>
+                <Text style={styles.adminText}>{isEs ? "Herramientas de administrador" : "Admin Tools"}</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={handleLogout}
+              style={({ pressed }) => [styles.logoutBtn, pressed && styles.navItemPressed]}
+            >
+              <View style={styles.logoutIconWrap}>
+                <IconSymbol name="rectangle.portrait.and.arrow.right" size={20} color="#FCA5A5" />
+              </View>
+              <Text style={styles.logoutText}>{isEs ? "Cerrar sesión" : "Log Out"}</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
       </Animated.View>
     </View>
   );
@@ -215,11 +264,19 @@ const styles = StyleSheet.create({
     left: 0,
     bottom: 0,
     backgroundColor: "#0F172A",
+    overflow: "hidden",
     shadowColor: "#000",
     shadowOffset: { width: 4, height: 0 },
     shadowOpacity: 0.35,
     shadowRadius: 16,
     elevation: 24,
+  },
+  drawerScroll: {
+    flex: 1,
+  },
+  drawerScrollContent: {
+    flexGrow: 1,
+    justifyContent: "space-between",
   },
   drawerHeader: {
     flexDirection: "row",
@@ -298,6 +355,56 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#334155",
+  },
+  roleSwitchBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(45, 212, 191, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(45, 212, 191, 0.28)",
+    marginBottom: 10,
+  },
+  roleSwitchIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(45, 212, 191, 0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  roleSwitchText: {
+    color: "#FB923C",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  adminBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(249, 115, 22, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(249, 115, 22, 0.28)",
+    marginBottom: 10,
+  },
+  adminIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(249, 115, 22, 0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  adminText: {
+    color: "#F97316",
+    fontSize: 16,
+    fontWeight: "800",
   },
   logoutBtn: {
     flexDirection: "row",

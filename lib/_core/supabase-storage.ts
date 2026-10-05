@@ -7,6 +7,8 @@
  * or: node scripts/setup-profile-photos-bucket.mjs (needs SUPABASE_SERVICE_ROLE_KEY)
  */
 
+import { trackAnalyticsEvent } from "@/lib/analytics";
+
 export type StorageUploadResult = {
   path: string;
   publicUrl: string;
@@ -70,9 +72,16 @@ class SupabaseStorageClient {
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        const errMessage =
-          error.message || error.error || `Upload failed: ${response.status}`;
+        const text = await response.text();
+        let error: any = {};
+        if (text) {
+          try {
+            error = JSON.parse(text);
+          } catch {
+            error = { message: text };
+          }
+        }
+        const errMessage = error.message || error.error || `Upload failed: ${response.status}`;
         console.error(`[SupabaseStorage] Upload error: ${response.status}`, error);
 
         const isBucketMissing =
@@ -85,14 +94,47 @@ class SupabaseStorageClient {
         };
       }
 
-      // Generate public URL
-      const publicUrl = `${this.supabaseUrl}/storage/v1/object/public/${this.bucketName}/${path}`;
+      // profile-photos is a private bucket (holds the admin-reviewed
+      // face-verification photo) — get a signed URL rather than assuming a
+      // public one works. Uses the caller's own session (this client-side
+      // path has no service-role key), so this only succeeds if storage RLS
+      // grants the uploader SELECT on their own object; if it doesn't,
+      // this throws and uploadProfilePhoto()'s existing data-URL fallback
+      // tier takes over, same as any other failure on this path.
+      const signRes = await fetch(`${this.supabaseUrl}/storage/v1/object/sign/${this.bucketName}/${encodeURI(path)}`, {
+        method: "POST",
+        headers: {
+          apikey: this.supabaseKey,
+          Authorization: `Bearer ${sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 365 }),
+      });
+      const signData = await signRes.json().catch(() => ({}));
+      if (!signRes.ok || !signData?.signedURL) {
+        throw {
+          code: "sign_failed",
+          message: signData?.message || signData?.error || "Could not create signed URL for uploaded photo",
+        };
+      }
+      const signedPath = String(signData.signedURL);
+      const publicUrl = signedPath.startsWith("http") ? signedPath : `${this.supabaseUrl}/storage/v1${signedPath}`;
 
       console.log(`[SupabaseStorage] Photo uploaded successfully: ${publicUrl}`);
 
       return { path, publicUrl };
     } catch (error: any) {
       console.error("[SupabaseStorage] Failed to upload photo:", error);
+      void trackAnalyticsEvent({
+        eventName: "supabase_error",
+        properties: {
+          bucket: this.bucketName,
+          operation: "upload_profile_photo",
+          code: error?.code || "unknown",
+          message: error?.message || "Upload failed",
+          user_id: userId,
+        },
+      });
       throw error;
     }
   }
@@ -114,7 +156,15 @@ class SupabaseStorageClient {
       });
 
       if (!response.ok && response.status !== 204) {
-        const error = await response.json();
+        const text = await response.text();
+        let error: any = {};
+        if (text) {
+          try {
+            error = JSON.parse(text);
+          } catch {
+            error = { message: text };
+          }
+        }
         console.error(`[SupabaseStorage] Delete error: ${response.status}`, error);
         throw {
           code: error.error || `http_${response.status}`,
@@ -125,6 +175,16 @@ class SupabaseStorageClient {
       console.log("[SupabaseStorage] Photo deleted successfully");
     } catch (error: any) {
       console.error("[SupabaseStorage] Failed to delete photo:", error);
+      void trackAnalyticsEvent({
+        eventName: "supabase_error",
+        properties: {
+          bucket: this.bucketName,
+          operation: "delete_profile_photo",
+          code: error?.code || "unknown",
+          message: error?.message || "Delete failed",
+          user_id: path.split("/")[0] || null,
+        },
+      });
       throw error;
     }
   }

@@ -1,4 +1,4 @@
-# WrenchUp — Handoff Documentation
+# Yojitan — Handoff Documentation
 
 **Version:** 1.8 (Latest Checkpoint: `983a6319`)  
 **Last Updated:** May 17, 2026  
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-**WrenchUp** is a React Native (Expo) mobile app that connects customers with on-demand mobile mechanics, similar to Uber. The app includes Supabase email/password authentication with role-based sign-up (Customer/Mechanic), post-signup profile completion, a full customer-side booking flow (request → browse mechanics → confirm → track → rate), a mechanic-side dashboard for accepting jobs and managing earnings, real-time location tracking with native maps, push notifications for job status updates, and automatic localization for Mexico (Latin American Spanish + 60% price discount).
+**Yojitan** is a React Native (Expo) mobile app that connects customers with on-demand mobile mechanics, similar to Uber. The app includes Supabase email/password authentication with role-based sign-up (Customer/Mechanic), post-signup profile completion, a full customer-side booking flow (request → browse mechanics → confirm → track → rate), a mechanic-side dashboard for accepting jobs and managing earnings, real-time location tracking with native maps, push notifications for job status updates, and automatic localization for Mexico (Latin American Spanish + 60% price discount).
 
 **Key Metrics:**
 - **66 unit tests** (all passing): auth, reducer, fare, geo, i18n, stripe, user-data-isolation
@@ -46,7 +46,7 @@
 ### Project Structure
 
 ```
-wrenchup/
+yojitan/
 ├── app/                          # Expo Router file-based routes
 │   ├── _layout.tsx              # Root layout with providers (Store, Theme)
 │   ├── oauth/                   # Auth callback (unused for now)
@@ -309,14 +309,14 @@ type AppState = {
 ```
 
 **Persistence Keys (AsyncStorage):**
-- `wrenchup_user`
-- `wrenchup_role`
-- `wrenchup_vehicles`
-- `wrenchup_jobs`
-- `wrenchup_mechanic_jobs`
-- `wrenchup_location`
-- `wrenchup_region_preference`
-- `wrenchup_theme`
+- `yojitan_user`
+- `yojitan_role`
+- `yojitan_vehicles`
+- `yojitan_jobs`
+- `yojitan_mechanic_jobs`
+- `yojitan_location`
+- `yojitan_region_preference`
+- `yojitan_theme`
 
 **Reducer Actions:**
 - `SET_USER_COORDS` — Update user location
@@ -560,7 +560,7 @@ const distance = haversine(lat1, lng1, lat2, lng2); // meters
 ### Running Tests
 
 ```bash
-cd /home/ubuntu/wrenchup
+cd /home/ubuntu/yojitan
 pnpm test
 ```
 
@@ -581,7 +581,7 @@ pnpm test
 
 | Token | Light | Dark | Usage |
 |-------|-------|------|-------|
-| `primary` | `#FF8C00` | `#FF8C00` | Wrench orange (CTAs, highlights) |
+| `primary` | `#FF8C00` | `#FF8C00` | Yojitan orange (CTAs, highlights) |
 | `background` | `#FFFFFF` | `#151718` | Screen background |
 | `surface` | `#F5F5F5` | `#1E2022` | Cards, elevated surfaces |
 | `foreground` | `#11181C` | `#ECEDEE` | Primary text |
@@ -744,8 +744,8 @@ pnpm test -- --reporter=verbose
 
 ### Location Permission Denied
 
-- **iOS**: Check Settings → WrenchUp → Location
-- **Android**: Check Settings → Apps → WrenchUp → Permissions
+- **iOS**: Check Settings → Yojitan → Location
+- **Android**: Check Settings → Apps → Yojitan → Permissions
 
 ---
 

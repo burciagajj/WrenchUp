@@ -6,15 +6,15 @@ export const SERVICE_TYPES: ServiceType[] = [
     name: "Battery Jump",
     description: "Jump start a dead battery or test/replace it on the spot.",
     icon: "bolt.fill",
-    basePrice: 49,
+    basePrice: 59,
     estimatedMinutes: 25,
   },
   {
     code: "flat_tire",
     name: "Flat Tire",
     description: "Tire change, patch, or spare installation at your location.",
-    icon: "car.side.fill",
-    basePrice: 69,
+    icon: "wheel.circle.fill",
+    basePrice: 75,
     estimatedMinutes: 35,
   },
   {
@@ -22,16 +22,24 @@ export const SERVICE_TYPES: ServiceType[] = [
     name: "Lockout",
     description: "Unlock your vehicle when keys are locked inside.",
     icon: "key.fill",
-    basePrice: 65,
+    basePrice: 69,
     estimatedMinutes: 25,
   },
   {
     code: "car_wash",
     name: "Car Wash",
     description: "On-site exterior wash and quick interior cleanup.",
-    icon: "drop.circle.fill",
-    basePrice: 55,
+    icon: "soap.fill",
+    basePrice: 59,
     estimatedMinutes: 35,
+  },
+  {
+    code: "quick_check_up",
+    name: "Quick Check-Up",
+    description: "A fast visual check that does not require a booking.",
+    icon: "checklist",
+    basePrice: 29,
+    estimatedMinutes: 15,
   },
   {
     code: "oil_change",
@@ -53,7 +61,7 @@ export const SERVICE_TYPES: ServiceType[] = [
     code: "diagnostic",
     name: "Diagnostic",
     description: "OBD-II scan and full system diagnostic with written report.",
-    icon: "info.circle.fill",
+    icon: "obd.scanner.fill",
     basePrice: 79,
     estimatedMinutes: 45,
   },
@@ -77,9 +85,17 @@ export const SERVICE_TYPES: ServiceType[] = [
     code: "general_checkup",
     name: "Check-Up",
     description: "Multi-point inspection covering fluids, belts, and brakes.",
-    icon: "checkmark.circle.fill",
+    icon: "checklist",
     basePrice: 59,
     estimatedMinutes: 40,
+  },
+  {
+    code: "fuel_delivery",
+    name: "Fuel Delivery",
+    description: "Emergency gas delivery when you run out on the road.",
+    icon: "fuelpump.fill",
+    basePrice: 65,
+    estimatedMinutes: 30,
   },
   {
     code: "other",
@@ -234,11 +250,11 @@ export const DEFAULT_VEHICLES: Vehicle[] = [
   },
 ];
 
-export const DEFAULT_LOCATION = "1245 Mission St, San Francisco, CA";
+export const DEFAULT_LOCATION = "Current location";
 export const DEFAULT_USER_NAME = "Alex";
 
 // Used as a sensible fallback when location permission is denied / unavailable.
 export const DEFAULT_COORDS = {
-  latitude: 37.7762,
-  longitude: -122.4154,
+  latitude: 31.7619,
+  longitude: -106.485,
 };

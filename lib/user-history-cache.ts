@@ -10,7 +10,7 @@ type UserHistorySnapshot = {
   defaultPaymentMethodId: string | null;
 };
 
-const keyFor = (userId: string) => `wrenchup_user_history_v1:${userId}`;
+const keyFor = (userId: string) => `yojitan_user_history_v1:${userId}`;
 
 export async function loadUserHistory(userId: string): Promise<UserHistorySnapshot | null> {
   try {

@@ -13,159 +13,26 @@ import { haptic } from "@/lib/haptics";
 import type { Vehicle } from "@/lib/types";
 import { useImagePicker } from "@/hooks/use-image-picker";
 import { deleteVehicleApproval, upsertVehicleApproval } from "@/lib/vehicle-approvals";
+import { uploadVehicleDoc } from "@/lib/upload-vehicle-doc";
+import { isVehicleReferencedByActiveJob } from "@/lib/vehicle-delete-guard-core";
+import { useL } from "@/hooks/use-locale";
+import { VEHICLE_CATALOG } from "@/lib/vehicle-catalog";
+import { useTapGuard } from "@/hooks/use-tap-guard";
 
 const CURRENT_YEAR = new Date().getFullYear();
 const YEAR_OPTIONS = Array.from({ length: CURRENT_YEAR - 1979 }, (_, i) => `${CURRENT_YEAR - i}`);
-const MAKE_MODEL_ENGINE_TRIM: Record<string, { models: string[]; engines: string[]; trims: string[] }> = {
-  Audi: {
-    models: ["A3", "A4", "A5", "A6", "Q3", "Q5", "Q7"],
-    engines: ["2.0L Turbo", "3.0L V6", "4.0L V8"],
-    trims: ["Premium", "Premium Plus", "Prestige", "S Line"],
-  },
-  BMW: {
-    models: ["228i", "330i", "530i", "X3", "X5", "M3"],
-    engines: ["2.0L Turbo", "3.0L I6", "4.4L V8"],
-    trims: ["Base", "Sport", "M Sport", "Luxury"],
-  },
-  Toyota: {
-    models: ["Corolla", "Camry", "RAV4", "Tacoma", "Highlander", "Tundra"],
-    engines: ["1.8L I4", "2.5L I4", "3.5L V6", "Hybrid"],
-    trims: ["L", "LE", "SE", "XLE", "Limited"],
-  },
-  Ford: {
-    models: ["Focus", "Fusion", "Escape", "F-150", "Explorer", "Mustang"],
-    engines: ["2.0L I4", "2.3L EcoBoost", "3.5L EcoBoost", "5.0L V8"],
-    trims: ["XL", "XLT", "Lariat", "Platinum", "ST"],
-  },
-  Chevrolet: {
-    models: ["Malibu", "Equinox", "Tahoe", "Silverado", "Camaro"],
-    engines: ["1.5L Turbo", "2.0L Turbo", "5.3L V8", "6.2L V8"],
-    trims: ["LS", "LT", "RS", "Premier", "High Country"],
-  },
-  Honda: {
-    models: ["Civic", "Accord", "CR-V", "Pilot", "Ridgeline"],
-    engines: ["1.5L Turbo", "2.0L I4", "3.5L V6", "Hybrid"],
-    trims: ["LX", "Sport", "EX", "EX-L", "Touring"],
-  },
-  Nissan: {
-    models: ["Sentra", "Altima", "Rogue", "Frontier", "Pathfinder"],
-    engines: ["2.0L I4", "2.5L I4", "3.5L V6"],
-    trims: ["S", "SV", "SL", "SR", "Platinum"],
-  },
-  Hyundai: {
-    models: ["Elantra", "Sonata", "Tucson", "Santa Fe", "Palisade"],
-    engines: ["2.0L I4", "2.5L I4", "1.6L Turbo", "Hybrid"],
-    trims: ["SE", "SEL", "N Line", "Limited", "Calligraphy"],
-  },
-  Kia: {
-    models: ["Forte", "K5", "Sportage", "Sorento", "Telluride"],
-    engines: ["2.0L I4", "2.5L I4", "1.6L Turbo", "Hybrid"],
-    trims: ["LX", "S", "EX", "GT-Line", "SX"],
-  },
-  Mercedes: {
-    models: ["C 300", "E 350", "GLC 300", "GLE 350", "S 500"],
-    engines: ["2.0L Turbo", "3.0L I6", "4.0L V8"],
-    trims: ["Base", "AMG Line", "Premium", "Exclusive"],
-  },
-  Lexus: {
-    models: ["IS 250", "IS 350", "ES 350", "RX 350", "GX 460", "LX 600"],
-    engines: ["2.5L I4", "3.5L V6", "5.7L V8", "Hybrid"],
-    trims: ["Base", "F Sport", "Luxury", "Premium", "Ultra Luxury"],
-  },
-  Mazda: {
-    models: ["Mazda3", "Mazda6", "CX-30", "CX-5", "CX-50", "CX-90"],
-    engines: ["2.0L I4", "2.5L I4", "2.5L Turbo", "3.3L Turbo"],
-    trims: ["S", "Select", "Preferred", "Premium", "Turbo"],
-  },
-  Volkswagen: {
-    models: ["Jetta", "Passat", "Golf", "Tiguan", "Atlas", "Taos"],
-    engines: ["1.4L Turbo", "1.5L Turbo", "2.0L Turbo", "3.6L V6"],
-    trims: ["S", "SE", "SEL", "R-Line", "Autobahn"],
-  },
-  Subaru: {
-    models: ["Impreza", "Legacy", "Crosstrek", "Forester", "Outback", "WRX"],
-    engines: ["2.0L Boxer", "2.5L Boxer", "2.4L Turbo Boxer"],
-    trims: ["Base", "Premium", "Sport", "Limited", "Touring"],
-  },
-  Jeep: {
-    models: ["Wrangler", "Compass", "Cherokee", "Grand Cherokee", "Gladiator"],
-    engines: ["2.0L Turbo", "3.6L V6", "5.7L V8", "6.4L V8"],
-    trims: ["Sport", "Latitude", "Limited", "Rubicon", "Overland"],
-  },
-  Dodge: {
-    models: ["Charger", "Challenger", "Durango", "Journey", "Hornet"],
-    engines: ["2.0L Turbo", "3.6L V6", "5.7L V8", "6.4L V8"],
-    trims: ["SXT", "GT", "R/T", "Scat Pack", "SRT"],
-  },
-  GMC: {
-    models: ["Terrain", "Acadia", "Yukon", "Sierra 1500", "Canyon"],
-    engines: ["2.0L Turbo", "3.6L V6", "5.3L V8", "6.2L V8"],
-    trims: ["SLE", "SLT", "AT4", "Denali", "Elevation"],
-  },
-  RAM: {
-    models: ["1500", "2500", "3500", "ProMaster", "ProMaster City"],
-    engines: ["3.6L V6", "5.7L V8", "6.7L Cummins Diesel"],
-    trims: ["Tradesman", "Big Horn", "Laramie", "Limited", "Rebel"],
-  },
-  Tesla: {
-    models: ["Model 3", "Model S", "Model X", "Model Y", "Cybertruck"],
-    engines: ["Single Motor", "Dual Motor", "Tri Motor"],
-    trims: ["Standard Range", "Long Range", "Performance", "Plaid"],
-  },
-  Acura: {
-    models: ["ILX", "TLX", "RDX", "MDX", "Integra"],
-    engines: ["2.0L Turbo", "2.4L I4", "3.5L V6", "Hybrid"],
-    trims: ["Base", "A-Spec", "Advance", "Technology", "Type S"],
-  },
-  Infiniti: {
-    models: ["Q50", "Q60", "QX50", "QX60", "QX80"],
-    engines: ["2.0L Turbo", "3.0L Twin Turbo", "3.5L V6", "5.6L V8"],
-    trims: ["Pure", "Luxe", "Sensory", "Autograph", "Red Sport"],
-  },
-  Mitsubishi: {
-    models: ["Mirage", "Lancer", "Outlander", "Outlander Sport", "Eclipse Cross"],
-    engines: ["1.2L I3", "2.0L I4", "2.4L I4", "Plug-In Hybrid"],
-    trims: ["ES", "SE", "SEL", "GT", "LE"],
-  },
-  Volvo: {
-    models: ["S60", "S90", "XC40", "XC60", "XC90"],
-    engines: ["2.0L Turbo", "2.0L Turbo Hybrid", "Recharge EV"],
-    trims: ["Core", "Plus", "Ultimate", "R-Design", "Inscription"],
-  },
-  Porsche: {
-    models: ["Macan", "Cayenne", "Panamera", "911", "Taycan"],
-    engines: ["2.0L Turbo", "2.9L Twin Turbo", "4.0L Flat-6", "EV"],
-    trims: ["Base", "S", "GTS", "Turbo", "Turbo S"],
-  },
-  Jaguar: {
-    models: ["XE", "XF", "F-PACE", "E-PACE", "I-PACE"],
-    engines: ["2.0L Turbo", "3.0L Supercharged", "EV"],
-    trims: ["S", "SE", "R-Dynamic", "HSE", "SVR"],
-  },
-  "Land Rover": {
-    models: ["Range Rover", "Range Rover Sport", "Defender", "Discovery", "Evoque"],
-    engines: ["2.0L Turbo", "3.0L I6", "4.4L V8", "Plug-In Hybrid"],
-    trims: ["S", "SE", "HSE", "Autobiography", "Dynamic"],
-  },
-  Mini: {
-    models: ["Cooper", "Cooper S", "Clubman", "Countryman", "John Cooper Works"],
-    engines: ["1.5L Turbo", "2.0L Turbo", "Electric"],
-    trims: ["Classic", "Signature", "Iconic", "S", "JCW"],
-  },
-};
-const MAKE_OPTIONS = Object.keys(MAKE_MODEL_ENGINE_TRIM);
-const TRANSMISSION_OPTIONS: Array<{ value: NonNullable<Vehicle["transmissionType"]>; label: string }> = [
+const MAKE_OPTIONS = Object.keys(VEHICLE_CATALOG);
+const TRANSMISSION_OPTIONS: { value: NonNullable<Vehicle["transmissionType"]>; label: string }[] = [
   { value: "automatic", label: "Automatic" },
   { value: "manual", label: "Manual" },
   { value: "cvt", label: "CVT" },
   { value: "dct", label: "Dual-Clutch" },
   { value: "other", label: "Other" },
 ];
-const DRIVETRAIN_OPTIONS: Array<{ value: NonNullable<Vehicle["drivetrain"]>; label: string }> = [
+const DRIVETRAIN_OPTIONS: { value: NonNullable<Vehicle["drivetrain"]>; label: string }[] = [
   { value: "FWD", label: "FWD (Front-Wheel Drive)" },
   { value: "RWD", label: "RWD (Rear-Wheel Drive)" },
   { value: "AWD", label: "AWD (All-Wheel Drive)" },
-  { value: "4WD", label: "4WD (Four-Wheel Drive)" },
 ];
 
 export default function VehicleFormScreen() {
@@ -173,13 +40,14 @@ export default function VehicleFormScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { user } = useAuth();
   const { state, dispatch } = useStore();
-  const { pickImageFromGallery } = useImagePicker();
+  const { pickDocumentImage } = useImagePicker();
+  const L = useL();
+  const guardDelete = useTapGuard();
   const existing = useMemo(
     () => (typeof id === "string" ? state.vehicles.find((v) => v.id === id) : undefined),
     [id, state.vehicles],
   );
 
-  const [nickname, setNickname] = useState(existing?.nickname ?? "");
   const [year, setYear] = useState(existing?.year?.toString() ?? "");
   const [make, setMake] = useState(existing?.make ?? "");
   const [model, setModel] = useState(existing?.model ?? "");
@@ -195,34 +63,46 @@ export default function VehicleFormScreen() {
   const [plate, setPlate] = useState(existing?.plate ?? "");
   const [insuranceDocUri, setInsuranceDocUri] = useState(existing?.insuranceDocUri ?? "");
   const [registrationStickerUri, setRegistrationStickerUri] = useState(existing?.registrationStickerUri ?? "");
+  const [uploadingInsurance, setUploadingInsurance] = useState(false);
+  const [uploadingRegistration, setUploadingRegistration] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerLabel, setPickerLabel] = useState("");
-  const [pickerOptions, setPickerOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [pickerOptions, setPickerOptions] = useState<{ value: string; label: string }[]>([]);
   const [pickerValue, setPickerValue] = useState<string>("");
   const [pickerOnSelect, setPickerOnSelect] = useState<(v: string) => void>(() => () => {});
 
-  const makeMeta = MAKE_MODEL_ENGINE_TRIM[make];
-  const modelOptions = (makeMeta?.models ?? []).map((value) => ({ value, label: value }));
-  const engineOptions = (makeMeta?.engines ?? ["2.0L Turbo", "2.5L I4", "3.0L V6"]).map((value) => ({ value, label: value }));
-  const trimOptions = (makeMeta?.trims ?? ["Base", "Sport", "Premium", "Limited"]).map((value) => ({ value, label: value }));
+  // Trim and engine aren't independent picks — a model's real trim ladder
+  // determines what engines are actually offered on each trim. So the chain
+  // is Make -> Model -> Trim -> Engine, each level narrowing from the
+  // catalog rather than everything being a flat per-make list.
+  const makeMeta = VEHICLE_CATALOG[make];
+  const modelOptions = Object.keys(makeMeta?.models ?? {}).map((value) => ({ value, label: value }));
+  const modelMeta = makeMeta?.models?.[model];
+  const trimOptions = Object.keys(modelMeta?.trims ?? {}).map((value) => ({ value, label: value }));
+  const trimMeta = modelMeta?.trims?.[trim];
+  const engineOptions = (trimMeta?.engines ?? []).map((value) => ({ value, label: value }));
   const transmissionLabel = TRANSMISSION_OPTIONS.find((o) => o.value === transmissionType)?.label ?? "";
   const drivetrainLabel = DRIVETRAIN_OPTIONS.find((o) => o.value === drivetrain)?.label ?? "";
 
+  // Insurance/registration docs are intentionally NOT required to save a
+  // vehicle — onboarding (auth/profile-complete.tsx) never asks for them
+  // either, so requiring them here made a customer's onboarding-created
+  // vehicle permanently uneditable until they backfilled documents they were
+  // never asked for in the first place. Docs stay optional everywhere; a
+  // vehicle just sits in "pending" approval until they're uploaded and an
+  // admin reviews them (see the "verify later" hint below).
   const isValid =
-    nickname.trim().length > 0 &&
     make.trim().length > 0 &&
     model.trim().length > 0 &&
     /^\d{4}$/.test(year) &&
     parseInt(year, 10) >= 1950 &&
-    parseInt(year, 10) <= CURRENT_YEAR + 1 &&
-    insuranceDocUri.trim().length > 0 &&
-    registrationStickerUri.trim().length > 0;
+    parseInt(year, 10) <= CURRENT_YEAR + 1;
 
   const openPicker = (
     label: string,
     currentValue: string,
-    options: Array<{ value: string; label: string }>,
+    options: { value: string; label: string }[],
     onSelect: (next: string) => void,
   ) => {
     setPickerLabel(label);
@@ -233,17 +113,46 @@ export default function VehicleFormScreen() {
   };
 
   const pickInsurance = async () => {
-    const picked = await pickImageFromGallery();
+    const picked = await pickDocumentImage();
     if (!picked) return;
-    setInsuranceDocUri(picked.uri);
     haptic.selection();
+    setUploadingInsurance(true);
+    try {
+      const resolved = await resolveAuthSession(user, (err) => {
+        Alert.alert(L("Could not upload document", "No se pudo subir el documento"), err.message);
+      });
+      if (!resolved) return;
+      // Actually upload to Supabase Storage — previously this just kept the
+      // local device file URI, which nobody (not even an admin reviewer on a
+      // different device) could ever open.
+      const path = await uploadVehicleDoc(resolved.userId, resolved.sessionToken, "insurance", picked);
+      setInsuranceDocUri(path);
+    } catch (err) {
+      console.error("[VehicleForm] Insurance upload failed:", err);
+      Alert.alert(L("Upload failed", "Error al subir"), err instanceof Error ? err.message : L("Please try again.", "Inténtalo de nuevo."));
+    } finally {
+      setUploadingInsurance(false);
+    }
   };
 
   const pickRegistration = async () => {
-    const picked = await pickImageFromGallery();
+    const picked = await pickDocumentImage();
     if (!picked) return;
-    setRegistrationStickerUri(picked.uri);
     haptic.selection();
+    setUploadingRegistration(true);
+    try {
+      const resolved = await resolveAuthSession(user, (err) => {
+        Alert.alert(L("Could not upload document", "No se pudo subir el documento"), err.message);
+      });
+      if (!resolved) return;
+      const path = await uploadVehicleDoc(resolved.userId, resolved.sessionToken, "registration", picked);
+      setRegistrationStickerUri(path);
+    } catch (err) {
+      console.error("[VehicleForm] Registration upload failed:", err);
+      Alert.alert(L("Upload failed", "Error al subir"), err instanceof Error ? err.message : L("Please try again.", "Inténtalo de nuevo."));
+    } finally {
+      setUploadingRegistration(false);
+    }
   };
 
   const handleSave = async () => {
@@ -253,7 +162,7 @@ export default function VehicleFormScreen() {
     }
 
     const vehiclePayload: Omit<Vehicle, "id"> = {
-      nickname: nickname.trim(),
+      nickname: `${year.trim()} ${make.trim()} ${model.trim()}`.trim(),
       year: parseInt(year, 10),
       make: make.trim(),
       model: model.trim(),
@@ -266,7 +175,7 @@ export default function VehicleFormScreen() {
     };
 
     const resolved = await resolveAuthSession(user, (err) => {
-      Alert.alert("Could not save vehicle", err.message);
+      Alert.alert(L("Could not save vehicle", "No se pudo guardar el vehículo"), err.message);
     });
     if (!resolved) return;
 
@@ -350,7 +259,7 @@ export default function VehicleFormScreen() {
     } catch (err) {
       console.error("[VehicleForm] Save failed:", err);
       haptic.error();
-      Alert.alert("Could not save vehicle", "Please try again.");
+      Alert.alert(L("Could not save vehicle", "No se pudo guardar el vehículo"), L("Please try again.", "Inténtalo de nuevo."));
     } finally {
       setSaving(false);
     }
@@ -358,9 +267,20 @@ export default function VehicleFormScreen() {
 
   const handleDelete = () => {
     if (!existing) return;
-    const doDelete = async () => {
+    if (isVehicleReferencedByActiveJob(existing.id, state.jobs)) {
+      haptic.error();
+      Alert.alert(
+        L("Can't delete this vehicle", "No se puede eliminar este vehículo"),
+        L(
+          "This vehicle is tied to an active or upcoming job. Wait until that job is completed or cancelled before deleting it.",
+          "Este vehículo está vinculado a un trabajo activo o próximo. Espera a que ese trabajo se complete o cancele antes de eliminarlo.",
+        ),
+      );
+      return;
+    }
+    const doDelete = guardDelete(async () => {
       const resolved = await resolveAuthSession(user, (err) => {
-        Alert.alert("Could not delete vehicle", err.message);
+        Alert.alert(L("Could not delete vehicle", "No se pudo eliminar el vehículo"), err.message);
       });
       if (!resolved) return;
 
@@ -387,23 +307,23 @@ export default function VehicleFormScreen() {
       } catch (err) {
         console.error("[VehicleForm] Delete failed:", err);
         haptic.error();
-        Alert.alert("Could not delete vehicle", "Please try again.");
+        Alert.alert(L("Could not delete vehicle", "No se pudo eliminar el vehículo"), L("Please try again.", "Inténtalo de nuevo."));
       } finally {
         setSaving(false);
       }
-    };
+    });
     if (Platform.OS === "web") {
       doDelete();
     } else {
-      Alert.alert("Delete vehicle", "This action cannot be undone.", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doDelete },
+      Alert.alert(L("Delete vehicle", "Eliminar vehículo"), L("This action cannot be undone.", "Esta acción no se puede deshacer."), [
+        { text: L("Cancel", "Cancelar"), style: "cancel" },
+        { text: L("Delete", "Eliminar"), style: "destructive", onPress: doDelete },
       ]);
     }
   };
 
   return (
-    <ScreenContainer edges={["top", "left", "right"]} style={{ backgroundColor: "#040B1B" }}>
+    <ScreenContainer edges={["left", "right"]} style={{ backgroundColor: "#040B1B" }} showBackButton title="Add vehicle">
       <View style={styles.header}>
         <Pressable
           onPress={() => {
@@ -431,7 +351,6 @@ export default function VehicleFormScreen() {
           <Text style={styles.previewMeta}>{drivetrainLabel || "Drivetrain"}</Text>
         </View>
 
-        <Field label="Nickname" value={nickname} onChangeText={setNickname} placeholder="Daily Driver" />
 
         <SelectField
           label="Year"
@@ -474,15 +393,40 @@ export default function VehicleFormScreen() {
               "Select Model",
               model,
               modelOptions,
-              (next) => setModel(next),
+              (next) => {
+                setModel(next);
+                setTrim("");
+                setEngineSize("");
+              },
+            )
+          }
+        />
+        {/* Trim before Engine, and Engine stays locked until a trim is
+            picked — which real engine options exist depends on the trim
+            (e.g. a Hybrid engine is often only on specific trims), not the
+            model as a whole. */}
+        <SelectField
+          label="Trim"
+          value={trim}
+          placeholder={model ? "Select trim" : "Select model first"}
+          disabled={!model}
+          onPress={() =>
+            openPicker(
+              "Select Trim",
+              trim,
+              trimOptions,
+              (next) => {
+                setTrim(next);
+                setEngineSize("");
+              },
             )
           }
         />
         <SelectField
           label="Engine"
           value={engineSize}
-          placeholder={make ? "Select engine" : "Select make first"}
-          disabled={!make}
+          placeholder={trim ? "Select engine" : "Select trim first"}
+          disabled={!trim}
           onPress={() =>
             openPicker(
               "Select Engine",
@@ -506,20 +450,6 @@ export default function VehicleFormScreen() {
           }
         />
         <SelectField
-          label="Trim"
-          value={trim}
-          placeholder={make ? "Select trim" : "Select make first"}
-          disabled={!make}
-          onPress={() =>
-            openPicker(
-              "Select Trim",
-              trim,
-              trimOptions,
-              (next) => setTrim(next),
-            )
-          }
-        />
-        <SelectField
           label="Traction"
           value={drivetrainLabel}
           placeholder="Select traction"
@@ -537,24 +467,26 @@ export default function VehicleFormScreen() {
         <Field label="License plate" value={plate} onChangeText={setPlate} placeholder="ABC1234" autoCapitalize="characters" maxLength={10} />
 
         <UploadRow
-          label="Insurance document"
-          value={insuranceDocUri ? "Uploaded" : "Tap to upload"}
+          label="Insurance document (optional for now)"
+          value={uploadingInsurance ? "Uploading..." : insuranceDocUri ? "Uploaded" : "Tap to upload"}
           onPress={pickInsurance}
+          disabled={uploadingInsurance}
         />
         <UploadRow
-          label="Registration sticker"
-          value={registrationStickerUri ? "Uploaded" : "Tap to upload"}
+          label="Registration sticker (optional for now)"
+          value={uploadingRegistration ? "Uploading..." : registrationStickerUri ? "Uploaded" : "Tap to upload"}
           onPress={pickRegistration}
+          disabled={uploadingRegistration}
         />
         <Text style={styles.hintText}>
-          Vehicle approval is required for mechanics to go online.
+          You can add insurance and registration now or later
         </Text>
 
         <View style={{ height: 8 }} />
         <PrimaryButton
           title={saving ? "Saving..." : existing ? "Save changes" : "Add vehicle"}
           onPress={handleSave}
-          disabled={!isValid || saving}
+          disabled={!isValid || saving || uploadingInsurance || uploadingRegistration}
           hapticType="success"
         />
         {existing ? (
@@ -622,7 +554,7 @@ function SelectModal({
   visible: boolean;
   title: string;
   value: string;
-  options: Array<{ value: string; label: string }>;
+  options: { value: string; label: string }[];
   onClose: () => void;
   onSelect: (v: string) => void;
 }) {
@@ -657,11 +589,25 @@ function SelectModal({
   );
 }
 
-function UploadRow({ label, value, onPress }: { label: string; value: string; onPress: () => void }) {
+function UploadRow({
+  label,
+  value,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
   return (
     <View style={{ gap: 6 }}>
       <Text style={styles.label}>{label}</Text>
-      <Pressable onPress={onPress} style={({ pressed }) => [styles.uploadBtn, pressed && { opacity: 0.8 }]}>
+      <Pressable
+        onPress={onPress}
+        disabled={disabled}
+        style={({ pressed }) => [styles.uploadBtn, (pressed || disabled) && { opacity: 0.8 }]}
+      >
         <Text style={styles.uploadBtnText}>{value}</Text>
         <IconSymbol name="chevron.right" size={16} color="#64748B" />
       </Pressable>

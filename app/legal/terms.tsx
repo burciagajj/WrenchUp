@@ -7,7 +7,7 @@ export default function TermsScreen() {
   const router = useRouter();
 
   return (
-    <ScreenContainer edges={["top", "left", "right", "bottom"]}>
+    <ScreenContainer edges={["left", "right", "bottom"]} showBackButton title="Terms of Service">
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={10}>
           <IconSymbol name="chevron.left" size={22} color="#0F172A" />

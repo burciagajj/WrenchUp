@@ -5,11 +5,13 @@ import { getMechanic, getServiceType } from "@/lib/seed";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { haptic } from "@/lib/haptics";
 import { useEffect, useRef } from "react";
+import { useL } from "@/hooks/use-locale";
 
 export function ActiveJobBanner() {
   const job = useActiveJob();
   const router = useRouter();
   const spin = useRef(new Animated.Value(0)).current;
+  const L = useL();
 
   useEffect(() => {
     if (!job || job.status !== "in_progress") {
@@ -57,9 +59,9 @@ export function ActiveJobBanner() {
         )}
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.title}>Active service • {service.name}</Text>
+        <Text style={styles.title}>{L("Active service", "Servicio activo")} • {service.name}</Text>
         <Text style={styles.subtitle}>
-          {mechanic.name} • {statusLabel(job.status)}
+          {mechanic.name} • {statusLabel(job.status, L)}
         </Text>
       </View>
       <IconSymbol name="chevron.right" size={20} color="#FFFFFF" />
@@ -67,13 +69,13 @@ export function ActiveJobBanner() {
   );
 }
 
-function statusLabel(status: string): string {
+function statusLabel(status: string, L: (en: string, es: string) => string): string {
   switch (status) {
-    case "searching": return "Finding mechanic";
-    case "accepted": return "Mechanic accepted";
-    case "enroute": return "On the way";
-    case "arrived": return "At your location";
-    case "in_progress": return "Service in progress";
+    case "searching": return L("Finding mechanic", "Buscando mecánico");
+    case "accepted": return L("Mechanic accepted", "Mecánico aceptado");
+    case "enroute": return L("On the way", "En camino");
+    case "arrived": return L("At your location", "En tu ubicación");
+    case "in_progress": return L("Service in progress", "Servicio en curso");
     default: return status;
   }
 }
@@ -101,8 +103,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   subtitle: {
-    color: "#FFEDD5",
+    color: "#FFFFFF",
     fontSize: 12,
+    fontWeight: "700",
     marginTop: 2,
   },
 });

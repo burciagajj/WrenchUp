@@ -1,12 +1,16 @@
-import { ScrollView, StyleSheet, Text, View, Pressable, Alert, Platform } from "react-native";
+import { ScrollView, StyleSheet, Text, View, Pressable, Alert, Platform, Linking } from "react-native";
+import { Image } from "expo-image";
+import Animated, { useSharedValue, useAnimatedStyle, withTiming } from "react-native-reanimated";
+import * as Contacts from "expo-contacts";
+import * as LocalAuthentication from "expo-local-authentication";
+import * as SMS from "expo-sms";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ScreenContainer } from "@/components/screen-container";
 import { useActiveJob, useStore } from "@/lib/store";
 import { getServiceType } from "@/lib/seed";
 import { LiveMap } from "@/components/live-map";
-import { interpolate } from "@/lib/geo";
-import { haversineMeters, metersToMiles } from "@/lib/geo";
+import { interpolate, haversineMeters, metersToMiles } from "@/lib/geo";
 import { Avatar } from "@/components/avatar";
 import { RatingStars } from "@/components/rating-stars";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -14,13 +18,22 @@ import { PrimaryButton } from "@/components/primary-button";
 import { haptic } from "@/lib/haptics";
 import { notifyNow, ensureNotificationPermissions } from "@/lib/notifications";
 import type { JobStatus } from "@/lib/types";
-import { useLocaleContext } from "@/hooks/use-locale";
+import { useLocaleContext, useL } from "@/hooks/use-locale";
 import { localizedServiceName } from "@/lib/service-i18n";
-import { fetchServiceMessages, assignDispatchToMechanic, updateDispatchStatus } from "@/lib/live-dispatch";
+import { updateDispatchStatus } from "@/lib/live-dispatch";
+import { forceCustomerLiveJobPoll } from "@/components/customer-live-job-sync";
 import { useAuth } from "@/lib/auth-context";
 import { resolveAuthSession } from "@/lib/resolve-auth-session";
+import { useMechanicOffers } from "@/hooks/use-mechanic-offers";
+import { usePartsCostProposal } from "@/hooks/use-parts-cost-proposal";
+import { PartsCostApprovalCard } from "@/components/parts-cost-approval-card";
+import { createSafetyReport } from "@/lib/safety";
+import { saveUserHistory } from "@/lib/user-history-cache";
+import { isMechanicLocationStale } from "@/lib/live-location-freshness";
+import { useTapGuard } from "@/hooks/use-tap-guard";
+import { CANCELLATION_FEE_USD } from "@/lib/cancellation-fee-core";
 
-// Status flow with simulated durations (ms)
+// Internal flow for simulated (non-remote) progression - keep for timer logic
 const FLOW: { status: JobStatus; duration: number }[] = [
   { status: "searching", duration: 4000 },
   { status: "accepted", duration: 3000 },
@@ -32,51 +45,87 @@ const FLOW: { status: JobStatus; duration: number }[] = [
 export default function TrackingScreen() {
   const router = useRouter();
   const job = useActiveJob();
-  const { dispatch } = useStore();
+  const { dispatch, state } = useStore();
   const { user } = useAuth();
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const matchedShownForJobRef = useRef<string | null>(null);
+  const guardCancel = useTapGuard();
+  const guardSecureComplete = useTapGuard();
   const [elapsedEnroute, setElapsedEnroute] = useState(0);
-  const [offer, setOffer] = useState<{
-    mechanicUserId: string;
-    mechanicName: string;
-    proposedTotal: number;
-    note?: string;
-  } | null>(null);
+  const { offers: mechanicOffers } = useMechanicOffers(job);
+  const { proposal: partsProposal, reload: reloadPartsProposal } = usePartsCostProposal(job?.remoteRequestId);
+  const [partsSessionToken, setPartsSessionToken] = useState<string | null>(null);
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    void resolveAuthSession(user).then((resolved) => {
+      if (alive && resolved) setPartsSessionToken(resolved.sessionToken);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [user]);
+  // The badge should only ever reflect offers the customer can actually act
+  // on right now — mechanicOffers accumulates every offer ever sent on this
+  // request (including from mechanics who later declined/were reassigned
+  // away), so a raw count would stay stuck showing a stale number forever
+  // once the offering mechanic is no longer on the job.
+  const actionableOfferCount = mechanicOffers.filter((o) => o.mechanicUserId === job?.mechanicId).length;
 
-  const mechanic = job?.mechanicName
-    ? {
-        id: job.mechanicId || "assigned",
-        name: job.mechanicName,
-        photoUrl: job.mechanicPhotoUrl ?? "",
-        rating: 4.9,
-        jobsCompleted: 0,
-        yearsExperience: 5,
-        hourlyRate: 0,
-        etaMinutes: 12,
-        distanceMiles: 1.8,
-        vehicle: "Service Vehicle",
-        bio: "",
-        specialties: [],
-        certifications: [],
-        reviews: [],
-        offsetMeters: { east: 250, north: 220 },
-      }
-    : undefined;
+  const prevStatusRef = useRef<JobStatus | null>(null);
+  const statusAnim = useSharedValue(0);
+  const headlineAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: 0.7 + statusAnim.value * 0.3,
+    transform: [{ scale: 0.98 + statusAnim.value * 0.02 }],
+  }));
+
+  const { t, locale, region, formatPrice } = useLocaleContext();
+  const L = useL();
+  const cancellationFeeLabel = formatPrice(CANCELLATION_FEE_USD);
+
+  const mechanic = useMemo(() => {
+    if (!job?.mechanicName) return undefined;
+    return {
+      id: job.mechanicId || "assigned",
+      name: job.mechanicName,
+      photoUrl: job.mechanicPhotoUrl ?? "",
+      rating: 4.9,
+      jobsCompleted: 0,
+      yearsExperience: 5,
+      hourlyRate: 0,
+      etaMinutes: 12,
+      distanceMiles: 1.8,
+      vehicle: L("Service Vehicle", "Vehículo de servicio"),
+      bio: "",
+      specialties: [],
+      certifications: [],
+      reviews: [],
+      offsetMeters: { east: 250, north: 220 },
+    };
+  }, [job?.mechanicId, job?.mechanicName, job?.mechanicPhotoUrl, L]);
   const service = job ? getServiceType(job.service) : undefined;
-  const { t, locale } = useLocaleContext();
+  const waitingOnMechanicConfirmation = !!job?.customerQuoteAcceptedAt && job.status === "searching";
 
   // Ask for notification permission once when this screen mounts (best place since user just acted).
   useEffect(() => {
     ensureNotificationPermissions();
   }, []);
 
+  // Reanimated tweak: smooth pulse/highlight when mechanic status updates live
+  useEffect(() => {
+    if (job?.status && job.status !== prevStatusRef.current) {
+      prevStatusRef.current = job.status;
+      statusAnim.value = 0;
+      statusAnim.value = withTiming(1, { duration: 600 });
+    }
+  }, [job?.status, statusAnim]);
+
   // Show a mechanic profile modal when the match is accepted.
   useEffect(() => {
     if (!job?.id) return;
     if (job.status === "accepted" && mechanic && matchedShownForJobRef.current !== job.id) {
       matchedShownForJobRef.current = job.id;
-      router.push("/mechanic/matched" as any);
+      router.push("/matched-mechanic" as any);
       return;
     }
     if (job.status === "cancelled" || job.status === "completed") {
@@ -122,76 +171,6 @@ export default function TrackingScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.status, job?.id]);
 
-  // Live dispatch polling moved to global CustomerLiveJobSync to avoid duplicate network loops.
-  useEffect(() => {
-    if (!job?.remoteRequestId || !user?.id || job.status !== "searching") {
-      setOffer(null);
-      return;
-    }
-    let alive = true;
-    const load = async () => {
-      try {
-        const resolved = await resolveAuthSession(user);
-        if (!resolved || !alive) return;
-        const rows = await fetchServiceMessages(resolved.sessionToken, job.remoteRequestId!);
-        const latest = [...rows].reverse().find((m) => m.message.startsWith("OFFER_JSON:"));
-        if (!latest) return;
-        const raw = latest.message.slice("OFFER_JSON:".length);
-        const parsed = JSON.parse(raw) as {
-          mechanic_user_id?: string;
-          mechanic_name?: string;
-          proposed_total?: number;
-          note?: string;
-        };
-        if (!parsed.mechanic_user_id || !parsed.mechanic_name || !parsed.proposed_total) return;
-        setOffer({
-          mechanicUserId: parsed.mechanic_user_id,
-          mechanicName: parsed.mechanic_name,
-          proposedTotal: Number(parsed.proposed_total),
-          note: parsed.note,
-        });
-      } catch (err) {
-        console.warn("[Tracking] offer polling failed:", err);
-      }
-    };
-    void load();
-    const t = setInterval(() => void load(), 7000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [job?.remoteRequestId, job?.status, user?.id]);
-
-  const handleAcceptOffer = async () => {
-    if (!job?.id || !job.remoteRequestId || !offer || !user?.id) return;
-    try {
-      const resolved = await resolveAuthSession(user);
-      if (!resolved) return;
-      try {
-        await assignDispatchToMechanic(
-          resolved.sessionToken,
-          job.remoteRequestId,
-          offer.mechanicUserId,
-          offer.mechanicName,
-        );
-      } catch (err) {
-        console.warn("[Tracking] assign offer failed, continuing local transition:", err);
-      }
-      dispatch({
-        type: "UPDATE_JOB_ASSIGNMENT",
-        payload: { id: job.id, mechanicId: offer.mechanicUserId, mechanicName: offer.mechanicName },
-      });
-      dispatch({
-        type: "UPDATE_JOB_STATUS",
-        payload: { id: job.id, status: "accepted" },
-      });
-      haptic.success();
-    } catch (error) {
-      console.error("[Tracking] accept offer failed:", error);
-      haptic.error();
-    }
-  };
-
   // Tick down enroute ETA
   useEffect(() => {
     if (!job || job.status !== "enroute") {
@@ -204,11 +183,48 @@ export default function TrackingScreen() {
       setElapsedEnroute(Math.floor((Date.now() - start) / 1000));
     }, 1000);
     return () => clearInterval(id);
-  }, [job?.status, job?.id]);
+  }, [job?.status, job?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- job object identity is unstable; we only need status/id
 
-  if (!job || !service) {
+  // Compute display ETA from live distance (shared reality for customer/mechanic).
+  // Memoized to avoid expensive recalc on every render during 1s timer ticks.
+  const liveMechanicPoint = useMemo(
+    () => (job ? job.mechanicLiveCoords ?? computeMechanicLive(job, elapsedEnroute) : null),
+    [job, elapsedEnroute]
+  );
+  const liveEta = useMemo(
+    () => (liveMechanicPoint && job ? estimateEtaMinutes(liveMechanicPoint, job.pickup ?? null) : null),
+    [liveMechanicPoint, job]
+  );
+  // Deliberately NOT memoized on a fixed dependency list — this needs to flip to
+  // stale purely from time passing, with no new data arriving. It's cheap, and
+  // the screen already re-renders every 2-5s from the background poll/realtime
+  // sync (components/customer-live-job-sync.tsx) even when nothing changed.
+  const isRealMechanicLocation = !!job?.mechanicLiveCoords;
+  const mechanicLocationStale =
+    isRealMechanicLocation && isMechanicLocationStale(job?.mechanicLocationUpdatedAt ?? null);
+  const displayEta = mechanicLocationStale ? null : liveEta;
+
+  const handleCall = useCallback(() => {
+    haptic.light();
+    if (Platform.OS === "web") {
+      console.log("Pretending to call", mechanic?.name ?? "mechanic");
+    } else {
+      Alert.alert(L("Call mechanic", "Llamar al mecánico"), `${L("Calling", "Llamando a")} ${mechanic?.name ?? L("your mechanic", "tu mecánico")}…`, [{ text: L("OK", "OK") }]);
+    }
+  }, [L, mechanic?.name]);
+
+  const handleMessage = useCallback(() => {
+    haptic.light();
+    if (!job?.remoteRequestId) return;
+    router.push({
+      pathname: "/messages" as any,
+      params: { requestId: job.remoteRequestId, peerName: mechanic?.name ?? "Mechanic" },
+    } as any);
+  }, [job?.remoteRequestId, mechanic?.name, router]);
+
+  if (!job) {
     return (
-      <ScreenContainer>
+      <ScreenContainer showBackButton title={t("tracking.title")}>
         <View style={styles.emptyWrap}>
           <View style={styles.emptyIcon}>
             <IconSymbol name="checkmark.circle.fill" size={42} color="#10B981" />
@@ -224,49 +240,126 @@ export default function TrackingScreen() {
       </ScreenContainer>
     );
   }
+  if (!service) {
+    // Harden: show basic info even without service type
+    return (
+      <ScreenContainer showBackButton title={t("tracking.title")}>
+        <View style={{ padding: 20 }}>
+          <Text style={{ color: "#F8FAFC", fontSize: 18, fontWeight: "800" }}>{L("Active request", "Solicitud activa")}</Text>
+          <Text style={{ color: "#CBD5E1", marginTop: 8 }}>{job.location}</Text>
+          <PrimaryButton title={t("tracking.back_home")} onPress={() => router.replace("/(tabs)" as any)} />
+        </View>
+      </ScreenContainer>
+    );
+  }
 
-  // Compute display ETA from live distance (shared reality for customer/mechanic).
-  const liveMechanicPoint = job.mechanicLiveCoords ?? computeMechanicLive(job, elapsedEnroute);
-  const liveEta = estimateEtaMinutes(liveMechanicPoint, job.pickup ?? null);
-
-  const handleCall = () => {
-    haptic.light();
-    if (Platform.OS === "web") {
-      console.log("Pretending to call", mechanic?.name ?? "mechanic");
-    } else {
-      Alert.alert("Call mechanic", `Calling ${mechanic?.name ?? "your mechanic"}…`, [{ text: "OK" }]);
-    }
-  };
-  const handleMessage = () => {
-    haptic.light();
-    if (!job.remoteRequestId) return;
-    router.push({
-      pathname: "/messages" as any,
-      params: { requestId: job.remoteRequestId, peerName: mechanic?.name ?? "Mechanic" },
-    } as any);
-  };
   const handleCancel = () => {
-    const confirm = async () => {
+    const confirm = guardCancel(async () => {
       haptic.warning();
+      let synced = true;
       if (job.remoteRequestId && user?.id) {
         try {
           const resolved = await resolveAuthSession(user);
-          if (resolved) {
-            await updateDispatchStatus(resolved.sessionToken, job.remoteRequestId, "cancelled");
+          if (!resolved) {
+            synced = false;
+          } else {
+            synced = (await updateDispatchStatus(resolved.sessionToken, job.remoteRequestId, "cancelled", {
+              cancelledByRole: "customer",
+              cancelledByUserId: user.id,
+            })).ok;
           }
         } catch (error) {
           console.error("[Tracking] Failed to cancel remote request:", error);
+          synced = false;
+        }
+        if (!synced) {
+          Alert.alert(
+            L("Connection issue", "Problema de conexión"),
+            L("Could not cancel right now. Please try again.", "No se pudo cancelar ahora. Inténtalo de nuevo."),
+          );
+          return;
         }
       }
       dispatch({ type: "UPDATE_JOB_STATUS", payload: { id: job.id, status: "cancelled" } });
-      router.replace("/(tabs)" as any);
-    };
+      await saveUserHistory(user.id, {
+        jobs: state.jobs.map((item) =>
+          item.id === job.id
+            ? {
+                ...item,
+                status: "cancelled",
+                cancelledAt: Date.now(),
+                cancelledByRole: "customer",
+              }
+            : item,
+        ),
+        activeJobId: null,
+        mechanicJobs: state.mechanicJobs,
+        mechanicActiveJobId: state.mechanicActiveJobId,
+        paymentMethods: state.paymentMethods,
+        defaultPaymentMethodId: state.defaultPaymentMethodId,
+      });
+
+      const mechanicHasStartedTrip = ["enroute", "arrived", "in_progress"].includes(job.status);
+      const mechanicWasAssigned = ["accepted", "enroute", "arrived", "in_progress"].includes(job.status);
+
+      // Explicit notification for the cancellation (inbox + push)
+      const cancelTitle = job.isBooked ? L("Booked service cancelled", "Servicio reservado cancelado") : L("Request cancelled", "Solicitud cancelada");
+      const cancelBody = mechanicHasStartedTrip
+        ? L(
+            `Your service request has been cancelled. A cancellation fee of ${cancellationFeeLabel} applies only if the mechanic had already driven a significant distance toward you; otherwise you will not be charged.`,
+            `Tu solicitud de servicio fue cancelada. Se aplica una tarifa de cancelación de ${cancellationFeeLabel} solo si el mecánico ya había recorrido una distancia importante hacia ti; de lo contrario no se te cobrará.`,
+          )
+        : mechanicWasAssigned
+          ? L(
+              "Your service request has been cancelled. No fee was charged because the mechanic had not started heading to you yet.",
+              "Tu solicitud de servicio fue cancelada. No se cobró ninguna tarifa porque el mecánico aún no había comenzado a ir hacia ti.",
+            )
+          : L(
+              "Your service request has been cancelled. No fee was charged because no mechanic had been assigned yet.",
+              "Tu solicitud de servicio fue cancelada. No se cobró ninguna tarifa porque aún no se había asignado un mecánico.",
+            );
+      dispatch({
+        type: "ADD_INBOX_NOTIFICATION",
+        payload: {
+          id: `cancel-${job.id}-${Date.now()}`,
+          title: cancelTitle,
+          body: cancelBody,
+          createdAt: Date.now(),
+          roleScope: "customer",
+          route: "/(tabs)/activity",
+        },
+      });
+      notifyNow({ title: cancelTitle, body: cancelBody });
+
+      Alert.alert(L("Trip canceled", "Viaje cancelado"), cancelBody, [
+        { text: L("OK", "OK"), onPress: () => router.replace("/(tabs)" as any) },
+      ]);
+    });
     if (Platform.OS === "web") {
       confirm();
     } else {
-      Alert.alert(job.isBooked ? "Cancel booked service" : "Cancel service", "Are you sure you want to cancel?", [
-        { text: "Keep job", style: "cancel" },
-        { text: "Cancel job", style: "destructive", onPress: () => void confirm() },
+      const isLateCancel = ["enroute", "arrived", "in_progress"].includes(job.status);
+      const mechanicWasAssigned = ["accepted", "enroute", "arrived", "in_progress"].includes(job.status);
+      const title = job.isBooked ? L("Cancel booked service", "Cancelar servicio reservado") : L("Cancel service", "Cancelar servicio");
+      const message = isLateCancel
+        ? L(
+            `Mechanic is already en route or on site.\n\nA ${cancellationFeeLabel} cancellation fee applies if they have already driven a significant part of the way to you (at least half a mile and a quarter of their trip). Otherwise you will not be charged. Proceed?`,
+            `El mecánico ya va en camino o está en el sitio.\n\nSe aplica una tarifa de cancelación de ${cancellationFeeLabel} si ya recorrió una parte importante del camino hacia ti (al menos media milla y una cuarta parte de su trayecto). De lo contrario no se te cobrará. ¿Deseas continuar?`,
+          )
+        : mechanicWasAssigned
+          ? L(
+              "A mechanic has been assigned, but they have not started heading to you yet.\n\nNo cancellation fee should apply yet. Proceed?",
+              "Ya se asignó un mecánico, pero aún no ha comenzado a ir hacia ti.\n\nTodavía no debería aplicarse una tarifa de cancelación. ¿Deseas continuar?",
+            )
+          : L(
+              "Are you sure you want to cancel this request? No fee applies if we haven't assigned a mechanic yet.",
+              "¿Seguro que quieres cancelar esta solicitud? No aplica cargo si todavía no hemos asignado un mecánico.",
+          )
+          ;
+
+      Alert.alert(title, message, [
+        { text: L("Keep job", "Mantener solicitud"), style: "cancel" },
+        { text: L("Cancel job", "Cancelar solicitud"), style: "destructive", onPress: () => void confirm() },
       ]);
     }
   };
@@ -275,24 +368,198 @@ export default function TrackingScreen() {
     router.replace({ pathname: "/complete" as any, params: { jobId: job.id } } as any);
   };
 
+  // Safety features for customer during active service
+  const handleSafety = async () => {
+    haptic.warning();
+    const persistSafetyReport = async (reportType: "emergency" | "safety_issue", message: string) => {
+      if (!job.remoteRequestId || !user?.id) return false;
+      const resolved = await resolveAuthSession(user);
+      if (!resolved) return false;
+      return createSafetyReport({
+        sessionToken: resolved.sessionToken,
+        role: "customer",
+        requestId: job.remoteRequestId,
+        reportType,
+        message,
+      });
+    };
+    const options = [
+      {
+        text: L("Call Emergency Services (911)", "Llamar servicios de emergencia (911)"),
+        onPress: async () => {
+          haptic.error();
+          const emergencyNum = "911";
+          if (Platform.OS !== "web") {
+            try {
+              await Linking.openURL(`tel:${emergencyNum}`);
+            } catch {}
+          }
+          Alert.alert(
+            L("Emergency", "Emergencia"),
+            L("Calling emergency services and sharing live location + job details.", "Llamando a emergencias y compartiendo ubicación + detalles del trabajo.")
+          );
+          // Log safety event
+          dispatch({
+            type: "ADD_INBOX_NOTIFICATION",
+            payload: {
+              id: `safety-emergency-${job.id}-${Date.now()}`,
+              title: L("Emergency services contacted", "Servicios de emergencia contactados"),
+              body: L("You requested emergency help during your service.", "Solicitaste ayuda de emergencia durante tu servicio."),
+              createdAt: Date.now(),
+              roleScope: "customer",
+              route: "/tracking",
+            },
+          });
+          notifyNow({
+            title: L("Emergency reported", "Emergencia reportada"),
+            body: L("Emergency services were contacted for your job.", "Se contactaron servicios de emergencia para tu trabajo."),
+          });
+          void persistSafetyReport(
+            "emergency",
+            `Customer called emergency services for ${job.service} at ${job.location}.`,
+          );
+        },
+      },
+      {
+        text: L("Share Live Location with Contact", "Compartir ubicación en vivo con contacto"),
+        onPress: async () => {
+          try {
+            const { status } = await Contacts.requestPermissionsAsync();
+            if (status === "granted") {
+              const contacts = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers] });
+              const withPhone = contacts.data.filter((c) => c.phoneNumbers && c.phoneNumbers.length > 0);
+              if (withPhone.length > 0) {
+                const contact = withPhone[0]; // demo: first with phone; in prod show picker
+                const phone = contact.phoneNumbers?.[0]?.number || "";
+                // Attempt real SMS send via expo-sms (guarded for web/unavailable)
+                let smsSent = false;
+                if (Platform.OS !== "web") {
+                  try {
+                    const available = await SMS.isAvailableAsync();
+                    if (available && phone) {
+                      const liveNote = `WrenchUp safety share: job #${job.id} at ${job.location}. Live location: https://maps.apple.com/?q=${encodeURIComponent(job.location)} (demo)`;
+                      await SMS.sendSMSAsync([phone], liveNote);
+                      smsSent = true;
+                    }
+                  } catch {}
+                }
+                Alert.alert(
+                  L("Location Shared", "Ubicación compartida"),
+                  smsSent
+                    ? L(`SMS sent to ${contact.name || phone} with live location for job #${job.id}.`, `SMS enviado a ${contact.name || phone} con ubicación en vivo para trabajo #${job.id}.`)
+                    : L(`Shared live location and job #${job.id} with ${contact.name || phone}. (SMS unavailable)`, `Compartido ubicación y trabajo #${job.id} con ${contact.name || phone}. (SMS no disponible)`)
+                );
+                dispatch({
+                  type: "ADD_INBOX_NOTIFICATION",
+                  payload: {
+                    id: `safety-share-${job.id}-${Date.now()}`,
+                    title: L("Live location shared", "Ubicación en vivo compartida"),
+                    body: L(`Shared with contact during service at ${job.location}.`, `Compartido con contacto durante servicio en ${job.location}.`),
+                    createdAt: Date.now(),
+                    roleScope: "customer",
+                    route: "/tracking",
+                  },
+                });
+              } else {
+                Alert.alert(L("No contacts", "Sin contactos"), L("No contacts with phone numbers found on device.", "No se encontraron contactos con números en el dispositivo."));
+              }
+            } else {
+              Alert.alert(L("Permission needed", "Permiso requerido"), L("Contacts permission required to share location with trusted contact.", "Se requiere permiso de contactos para compartir ubicación con un contacto de confianza."));
+            }
+          } catch {
+            Alert.alert(L("Error", "Error"), L("Could not share location.", "No se pudo compartir la ubicación."));
+          }
+        },
+      },
+      {
+        text: L("Report Safety Issue to Support", "Reportar problema de seguridad a soporte"),
+        onPress: async () => {
+          const persisted = await persistSafetyReport(
+            "safety_issue",
+            `Customer reported a safety issue during ${job.service} at ${job.location}.`,
+          );
+          dispatch({
+            type: "ADD_INBOX_NOTIFICATION",
+            payload: {
+              id: `safety-issue-${job.id}-${Date.now()}`,
+              title: L("Safety issue reported", "Problema de seguridad reportado"),
+              body: L(`Reported during service at ${job.location}. Support will contact you.`, `Reportado durante servicio en ${job.location}. Soporte te contactará.`),
+              createdAt: Date.now(),
+              roleScope: "customer",
+              route: "/tracking",
+            },
+          });
+          notifyNow({ title: L("Safety reported", "Seguridad reportada"), body: L("Thank you. Our team is notified.", "Gracias. Nuestro equipo ha sido notificado.") });
+          Alert.alert(
+            persisted ? L("Reported", "Reportado") : L("Report saved locally", "Reporte guardado localmente"),
+            persisted
+              ? L("Thank you. A support agent has been notified and will follow up.", "Gracias. Un agente de soporte ha sido notificado y dará seguimiento.")
+              : L("We could not reach support right now. Please try again if this is urgent.", "No pudimos contactar a soporte ahora. Intenta de nuevo si es urgente."),
+          );
+        },
+      },
+      { text: L("Cancel", "Cancelar"), style: "cancel" as const },
+    ];
+    Alert.alert(
+      L("Safety & Emergency", "Seguridad y Emergencia"),
+      L("Your location and job details are being shared with the platform. Choose an action:", "Tu ubicación y detalles del trabajo se comparten con la plataforma. Elige una acción:"),
+      options
+    );
+  };
+
+  // Biometric gate for sensitive payout-releasing confirm (extra authentication)
+  const handleSecureComplete = guardSecureComplete(async () => {
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      if (hasHardware) {
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: L("Confirm service completion with biometrics", "Confirma la finalización con biometría"),
+          fallbackLabel: L("Use passcode", "Usar código"),
+        });
+        if (result.success) {
+          handleComplete();
+        } else {
+          Alert.alert(L("Authentication failed", "Autenticación fallida"), L("Could not verify identity.", "No se pudo verificar la identidad."));
+        }
+      } else {
+        handleComplete();
+      }
+    } catch {
+      handleComplete();
+    }
+  });
+
+  // Same reasoning as the mechanic's active job screen: once matched/active,
+  // there's no previous screen it's safe to pop back to — the default
+  // router.back() could resurface request-pending.tsx (or book-service.tsx)
+  // still sitting in history, from which "Cancel request" could cancel an
+  // already-active job.
+  const handleBackFromTracking = () => {
+    haptic.light();
+    router.replace("/(tabs)" as any);
+  };
+
   return (
-    <ScreenContainer edges={["top", "left", "right"]}>
+    <ScreenContainer
+      edges={["left", "right"]}
+      showBackButton
+      onBack={handleBackFromTracking}
+      title={t("tracking.title")}
+      headerRight={
+        <Pressable 
+          onPress={() => {
+            haptic.selection();
+            forceCustomerLiveJobPoll();
+          }}
+          hitSlop={10}
+          style={{ padding: 8 }}
+        >
+          <IconSymbol name="arrow.clockwise" size={20} color="#FFFFFF" />
+        </Pressable>
+      }
+    >
       <ScrollView contentContainerStyle={{ paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
-        {/* Top bar */}
-        <View style={styles.topBar}>
-          <Pressable
-            onPress={() => {
-              haptic.light();
-              router.replace("/(tabs)" as any);
-            }}
-            hitSlop={10}
-            style={({ pressed }) => [styles.topBackBtn, pressed && { opacity: 0.7 }]}
-          >
-            <IconSymbol name="chevron.left" size={22} color="#0F172A" />
-          </Pressable>
-          <Text style={styles.topTitle}>{t("tracking.title")}</Text>
-          <View style={{ width: 36 }} />
-        </View>
+        {/* Content starts cleanly below the new consistent header */}
 
         {/* Map card */}
         <View style={{ paddingHorizontal: 20, marginTop: 4 }}>
@@ -300,15 +567,44 @@ export default function TrackingScreen() {
             status={mapStatus(job.status)}
             pickup={job.pickup ?? null}
             mechanic={liveMechanicPoint}
-            etaMinutes={job.status === "accepted" || job.status === "enroute" ? liveEta : undefined}
+            etaMinutes={job.status === "accepted" || job.status === "enroute" ? displayEta ?? undefined : undefined}
           />
         </View>
 
-        {/* Status headline */}
-        <View style={styles.headline}>
-          <Text style={styles.headlineTitle}>{statusHeadline(job.status, liveEta, t as any)}</Text>
+        {/* Status headline - animates on live mechanic status updates */}
+          <Animated.View style={[styles.headline, headlineAnimatedStyle]}>
+          <Text style={styles.headlineTitle}>{statusHeadline(job.status, displayEta, t as any)}</Text>
           <Text style={styles.headlineSub}>{localizedServiceName(service.code, locale)} • {job.location}</Text>
-        </View>
+          {(job.status === "accepted" || job.status === "enroute") &&
+            (mechanicLocationStale ? (
+              <View style={{ marginTop: 8, alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "rgba(251,191,36,0.16)", borderWidth: 1, borderColor: "rgba(251,191,36,0.5)", paddingHorizontal: 9, paddingVertical: 3, borderRadius: 7 }}>
+                <IconSymbol name="exclamationmark.triangle.fill" size={10} color="#FCD34D" />
+                <Text style={{ color: "#FDE68A", fontSize: 11, fontWeight: "800" }}>
+                  {L("Location may be outdated", "La ubicación puede estar desactualizada")}
+                </Text>
+              </View>
+            ) : (
+              displayEta ? (
+                <View style={{ marginTop: 8, alignSelf: "flex-start", backgroundColor: "rgba(20,184,166,0.18)", borderWidth: 1, borderColor: "rgba(94,234,212,0.5)", paddingHorizontal: 9, paddingVertical: 3, borderRadius: 7 }}>
+                  <Text style={{ color: "#FFEDD5", fontSize: 11, fontWeight: "800" }}>{L("LIVE ETA", "ETA EN VIVO")}: ~{displayEta} min</Text>
+                </View>
+              ) : null
+            ))}
+        </Animated.View>
+
+        {partsProposal && partsSessionToken && job.remoteRequestId ? (
+          <View style={{ paddingHorizontal: 20, marginTop: 14 }}>
+            <PartsCostApprovalCard
+              requestId={job.remoteRequestId}
+              partsCost={partsProposal.partsCost}
+              currency={partsProposal.currency}
+              sessionToken={partsSessionToken}
+              formatPrice={formatPrice}
+              onApproved={() => void reloadPartsProposal()}
+              onDeclined={() => void reloadPartsProposal()}
+            />
+          </View>
+        ) : null}
 
         {/* Mechanic row */}
         {mechanic ? (
@@ -327,47 +623,87 @@ export default function TrackingScreen() {
         ) : (
           <View style={styles.mechanicRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.mechanicName}>Finding your mechanic…</Text>
-              <Text style={styles.mechanicVehicle}>You’ll see profile details as soon as one accepts.</Text>
+              <Text style={styles.mechanicName}>{L("Finding your mechanic…", "Buscando a tu mecánico…")}</Text>
+              <Text style={styles.mechanicVehicle}>{L("You’ll see profile details as soon as one accepts.", "Verás los detalles del perfil en cuanto uno acepte.")}</Text>
             </View>
           </View>
         )}
 
-        {job.status === "searching" && offer ? (
-          <View style={{ marginHorizontal: 20, marginTop: 12, backgroundColor: "#1A1A2E", borderWidth: 1, borderColor: "#2A2A40", borderRadius: 12, padding: 12, gap: 6 }}>
-            <Text style={{ color: "#F8FAFC", fontWeight: "800", fontSize: 15 }}>
-              {locale === "es-MX" ? "Oferta de mecánico recibida" : "Mechanic offer received"}
+        {waitingOnMechanicConfirmation ? (
+          <View style={{ marginHorizontal: 20, marginTop: 12, backgroundColor: "#0B2545", borderWidth: 1, borderColor: "#60A5FA", borderRadius: 12, padding: 12, gap: 6 }}>
+            <Text style={{ color: "#EFF6FF", fontWeight: "800", fontSize: 15 }}>
+              {L("Offer accepted", "Oferta aceptada")}
             </Text>
-            <Text style={{ color: "#CBD5E1", fontSize: 13 }}>
-              {(locale === "es-MX" ? "Mecánico" : "Mechanic")}: {offer.mechanicName}
+            <Text style={{ color: "#DBEAFE", fontSize: 13, lineHeight: 18 }}>
+              {job.mechanicName
+                ? `${job.mechanicName} ${L("has not confirmed yet.", "aún no confirma.")}`
+                : L("Waiting for mechanic confirmation.", "Esperando confirmación del mecánico.")}
             </Text>
-            <Text style={{ color: "#FB923C", fontSize: 14, fontWeight: "800" }}>
-              {locale === "es-MX" ? "Precio final propuesto" : "Proposed final price"}: ${offer.proposedTotal.toFixed(2)}
+            <Text style={{ color: "#BFDBFE", fontSize: 12, fontWeight: "800" }}>
+              {L("We’ll notify you as soon as they accept.", "Te avisaremos en cuanto acepte.")}
             </Text>
-            {offer.note ? <Text style={{ color: "#E2E8F0", fontSize: 12 }}>{offer.note}</Text> : null}
-            <PrimaryButton
-              title={locale === "es-MX" ? "Aceptar oferta" : "Accept Offer"}
-              onPress={() => void handleAcceptOffer()}
-              hapticType="success"
-            />
           </View>
+        ) : job.status === "searching" && actionableOfferCount > 0 ? (
+          <Pressable
+            onPress={() => {
+              haptic.light();
+              router.push("/mechanic-offers" as any);
+            }}
+            style={({ pressed }) => [styles.offersButton, pressed && { opacity: 0.9 }]}
+          >
+            <IconSymbol name="tag.fill" size={16} color="#FFFFFF" />
+            <Text style={styles.offersButtonText}>
+              {L("Offers from mechanics", "Ofertas de mecánicos")} ({actionableOfferCount})
+            </Text>
+            <IconSymbol name="chevron.right" size={14} color="#FFFFFF" />
+          </Pressable>
         ) : null}
 
-        {/* Timeline */}
+        {/* Service evidence photos (before/after) if provided by mechanic */}
+        {(job.beforePhotoUrl || job.afterPhotoUrl) && job.status !== "searching" && (
+          <View style={{ marginHorizontal: 20, marginTop: 12 }}>
+            <Text style={{ color: "#E2E8F0", fontSize: 12, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>{L("Service Evidence", "Evidencia del servicio")}</Text>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              {job.beforePhotoUrl && (
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: "#CBD5E1", fontSize: 11, marginBottom: 4, fontWeight: "700" }}>{L("Before", "Antes")}</Text>
+                  {/* Simple image placeholder - in real would use <Image> from expo-image */}
+                  <View style={{ height: 100, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: "#334155" }}>
+                    <Image source={{ uri: job.beforePhotoUrl }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+                  </View>
+                </View>
+              )}
+              {job.afterPhotoUrl && (
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: "#CBD5E1", fontSize: 11, marginBottom: 4, fontWeight: "700" }}>{L("After", "Después")}</Text>
+                  <View style={{ height: 100, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: "#334155" }}>
+                    <Image source={{ uri: job.afterPhotoUrl }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+                  </View>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* Customer Status Timeline - updates live based on mechanic status */}
         <View style={styles.timelineCard}>
-          <Text style={styles.timelineTitle}>{t("tracking.status")}</Text>
-          {FLOW.map((f, idx) => {
-            const currentIdx = FLOW.findIndex((x) => x.status === job.status);
-            const done = idx < currentIdx;
-            const active = idx === currentIdx;
+          <Text style={styles.timelineTitle}>{L("Service Status", "Estado del servicio")}</Text>
+          <Text style={{ color: "#CBD5E1", fontSize: 12, marginBottom: 12, lineHeight: 17 }}>
+            {L("Updates automatically as your mechanic progresses", "Se actualiza automáticamente a medida que avanza tu mecánico")}
+          </Text>
+          {(["accepted", "enroute", "arrived", "in_progress", "completed"] as JobStatus[]).map((status, idx, steps) => {
+            const currentIdx = steps.findIndex((x) => x === job.status);
+            const done = idx < currentIdx || (job.status === "completed" && idx === steps.length - 1);
+            const active = status === job.status;
+            const copy = customerStatusCopy(status, locale === "es-MX");
             return (
               <TimelineRow
-                key={f.status}
-                label={statusLabel(f.status, t as any)}
-                description={statusDescription(f.status, mechanic?.name ?? "your mechanic", t as any)}
+                key={status}
+                label={copy.label}
+                description={copy.desc}
                 done={done}
                 active={active}
-                isLast={idx === FLOW.length - 1}
+                isLast={idx === steps.length - 1}
               />
             );
           })}
@@ -375,32 +711,79 @@ export default function TrackingScreen() {
 
         {/* Actions */}
         <View style={{ paddingHorizontal: 20, marginTop: 16, gap: 10 }}>
+          {/* Customer must explicitly confirm completion after mechanic marks job done */}
           {job.status === "in_progress" && !!job.mechanicMarkedDoneAt ? (
-            <PrimaryButton
-              title={t("tracking.cta_complete")}
-              onPress={handleComplete}
-              hapticType="success"
-              iconRight={<IconSymbol name="checkmark" size={18} color="#FFFFFF" />}
-            />
+            <>
+              <View style={{
+                backgroundColor: "#FEF3C7",
+                borderWidth: 1,
+                borderColor: "#F59E0B",
+                borderRadius: 12,
+                padding: 12,
+                marginBottom: 4,
+              }}>
+                <Text style={{ color: "#92400E", fontSize: 13, fontWeight: "700", marginBottom: 4 }}>
+                  {L("⚠️ Confirming releases payout to the mechanic", "⚠️ Confirmar libera el pago al mecánico")}
+                </Text>
+                <Text style={{ color: "#92400E", fontSize: 12, lineHeight: 16 }}>
+                  {L(
+                    "By tapping confirm you are verifying the work is done to your satisfaction. Your card is charged and the mechanic receives a deposit now, with the rest of their payout released after 2 hours. If something is wrong, open a dispute within that time.",
+                    "Al tocar confirmar, verificas que el trabajo quedó a tu satisfacción. Se cobra tu tarjeta y el mecánico recibe un adelanto ahora; el resto de su pago se libera después de 2 horas. Si algo no está bien, abre una disputa dentro de ese tiempo.",
+                  )}
+                </Text>
+              </View>
+              <PrimaryButton
+                title={L("Confirm Service Complete", "Confirmar servicio completo")}
+                onPress={handleSecureComplete}
+                hapticType="success"
+                iconRight={<IconSymbol name="checkmark" size={18} color="#FFFFFF" />}
+              />
+            </>
           ) : null}
+          {/* Allow cancel for booked jobs until completed */}
           {job.isBooked && job.status !== "completed" && job.status !== "cancelled" ? (
             <PrimaryButton
-              title="Cancel booked service"
+              title={L("Cancel booked service", "Cancelar servicio reservado")}
               variant="warm"
               onPress={handleCancel}
               hapticType="medium"
               iconRight={<IconSymbol name="xmark" size={16} color="#FFFFFF" />}
             />
           ) : null}
-          {!job.isBooked && job.status !== "in_progress" ? (
+
+          {/* Allow cancel for regular requests during searching + enroute + arrived */}
+          {!job.isBooked && 
+           ["searching", "accepted", "enroute", "arrived"].includes(job.status) ? (
             <PrimaryButton
-              title={job.status === "searching" ? "Cancel request" : t("tracking.cta_cancel")}
+              title={job.status === "searching" ? L("Cancel request", "Cancelar solicitud") : t("tracking.cta_cancel")}
               variant="warm"
               onPress={handleCancel}
               hapticType="medium"
               iconRight={<IconSymbol name="xmark" size={16} color="#FFFFFF" />}
             />
           ) : null}
+
+          {/* Always-visible Safety SOS for active jobs (customer protection) */}
+          {!["completed", "cancelled"].includes(job.status) && (
+            <Pressable
+              onPress={handleSafety}
+              style={{
+                marginTop: 12,
+                backgroundColor: "#DC2626",
+                borderRadius: 12,
+                paddingVertical: 14,
+                alignItems: "center",
+                flexDirection: "row",
+                justifyContent: "center",
+                gap: 8,
+              }}
+            >
+              <IconSymbol name="exclamationmark.triangle.fill" size={18} color="#FFFFFF" />
+              <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "800" }}>
+                {L("SAFETY / EMERGENCY", "SEGURIDAD / EMERGENCIA")}
+              </Text>
+            </Pressable>
+          )}
         </View>
       </ScrollView>
     </ScreenContainer>
@@ -431,17 +814,19 @@ function TimelineRow({
   active: boolean;
   isLast: boolean;
 }) {
-  const color = done ? "#10B981" : active ? "#F97316" : "#CBD5E1";
+  const color = done ? "#10B981" : active ? "#FDBA74" : "#64748B";
   return (
     <View style={{ flexDirection: "row" }}>
       <View style={{ alignItems: "center", width: 24 }}>
-        <View style={[styles.dot, { backgroundColor: color }]}>
+        <View style={[styles.dot, { backgroundColor: color, transform: active ? [{ scale: 1.1 }] : [] }]}>
           {done ? <IconSymbol name="checkmark" size={10} color="#FFFFFF" /> : null}
         </View>
-        {!isLast ? <View style={[styles.line, { backgroundColor: done ? "#10B981" : "#E2E8F0" }]} /> : null}
+        {!isLast ? (
+          <View style={[styles.line, { backgroundColor: done ? "#10B981" : active ? "#FDBA74" : "#475569", height: active ? 3 : 2 }]} />
+        ) : null}
       </View>
       <View style={{ flex: 1, paddingBottom: 18 }}>
-        <Text style={[styles.timelineLabel, active && { color: "#F97316" }]}>{label}</Text>
+        <Text style={[styles.timelineLabel, active && { color: "#FFEDD5" }]}>{label}</Text>
         <Text style={styles.timelineDesc}>{description}</Text>
       </View>
     </View>
@@ -480,40 +865,51 @@ function estimateEtaMinutes(
   return Math.max(1, eta);
 }
 
-function statusHeadline(status: JobStatus, eta: number, t: (k: string, p?: Record<string, string | number>) => string): string {
+function customerStatusCopy(status: JobStatus, isEs: boolean): { label: string; desc: string } {
+  switch (status) {
+    case "accepted":
+      return isEs
+        ? { label: "Mecánico aceptado", desc: "Asignado a tu solicitud" }
+        : { label: "Mechanic accepted", desc: "Assigned to your request" };
+    case "enroute":
+      return isEs
+        ? { label: "Mecánico en camino", desc: "Se dirige a tu ubicación" }
+        : { label: "Mechanic is on the way", desc: "Heading to your location" };
+    case "arrived":
+      return isEs
+        ? { label: "Mecánico llegó", desc: "En tu vehículo" }
+        : { label: "Mechanic has arrived", desc: "At your vehicle" };
+    case "in_progress":
+      return isEs
+        ? { label: "Trabajando en tu vehículo", desc: "Servicio en progreso" }
+        : { label: "Working on your vehicle", desc: "Service in progress" };
+    case "completed":
+      return isEs
+        ? { label: "Servicio completo", desc: "Listo para revisar" }
+        : { label: "Service complete", desc: "Ready for review" };
+    default:
+      return isEs
+        ? { label: "Estado actualizado", desc: "Tu servicio se está actualizando" }
+        : { label: "Status updated", desc: "Your service is updating" };
+  }
+}
+
+function statusHeadline(
+  status: JobStatus,
+  eta: number | null,
+  t: (k: string, p?: Record<string, string | number>) => string,
+): string {
   switch (status) {
     case "searching": return t("tracking.searching");
     case "accepted": return t("tracking.accepted");
-    case "enroute": return t("tracking.arriving_in", { minutes: eta });
+    case "enroute":
+      return eta != null ? t("tracking.arriving_in", { minutes: eta }) : t("tracking.on_the_way_no_eta");
     case "arrived": return t("tracking.arrived");
     case "in_progress": return t("tracking.in_progress");
     case "completed": return t("tracking.completed");
     case "cancelled": return t("tracking.cancelled");
   }
 }
-
-function statusLabel(s: JobStatus, t: (k: string) => string): string {
-  switch (s) {
-    case "searching": return t("tracking.step_searching");
-    case "accepted": return t("tracking.step_accepted");
-    case "enroute": return t("tracking.step_enroute");
-    case "arrived": return t("tracking.step_arrived");
-    case "in_progress": return t("tracking.step_in_progress");
-    default: return s;
-  }
-}
-
-function statusDescription(s: JobStatus, name: string, t: (k: string, p?: Record<string, string | number>) => string): string {
-  switch (s) {
-    case "searching": return t("tracking.desc_searching");
-    case "accepted": return t("tracking.desc_accepted", { name });
-    case "enroute": return t("tracking.desc_enroute", { name });
-    case "arrived": return t("tracking.desc_arrived");
-    case "in_progress": return t("tracking.desc_in_progress");
-    default: return "";
-  }
-}
-
 
 function emitNotification(
   status: JobStatus,
@@ -559,42 +955,44 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  topTitle: { fontSize: 16, fontWeight: "800", color: "#0F172A" },
+  topTitle: { fontSize: 16, fontWeight: "800", color: "#F8FAFC" },
   headline: { paddingHorizontal: 20, marginTop: 18 },
-  headlineTitle: { fontSize: 22, fontWeight: "800", color: "#0F172A" },
-  headlineSub: { fontSize: 13, color: "#64748B", marginTop: 4 },
+  headlineTitle: { fontSize: 22, fontWeight: "900", color: "#F8FAFC" },
+  headlineSub: { fontSize: 13, color: "#CBD5E1", marginTop: 5, lineHeight: 18 },
   mechanicRow: {
     marginHorizontal: 20,
     marginTop: 18,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#111827",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#334155",
     borderRadius: 16,
     padding: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
-  mechanicName: { fontSize: 15, fontWeight: "800", color: "#0F172A" },
-  mechanicVehicle: { fontSize: 12, color: "#64748B", marginTop: 2 },
+  mechanicName: { fontSize: 15, fontWeight: "900", color: "#F8FAFC" },
+  mechanicVehicle: { fontSize: 12, color: "#CBD5E1", marginTop: 2, lineHeight: 17 },
   actionBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#0F172A",
+    backgroundColor: "#C2410C",
+    borderWidth: 1,
+    borderColor: "#FDBA74",
     alignItems: "center",
     justifyContent: "center",
   },
   timelineCard: {
     marginHorizontal: 20,
     marginTop: 18,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#111827",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#334155",
     borderRadius: 16,
     padding: 16,
   },
-  timelineTitle: { fontSize: 13, color: "#64748B", fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 },
+  timelineTitle: { fontSize: 13, color: "#F8FAFC", fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 },
   dot: {
     width: 18,
     height: 18,
@@ -603,13 +1001,28 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   line: { width: 2, flex: 1, marginTop: 2 },
-  timelineLabel: { fontSize: 14, fontWeight: "700", color: "#0F172A" },
-  timelineDesc: { fontSize: 12, color: "#64748B", marginTop: 2, lineHeight: 17 },
+  timelineLabel: { fontSize: 14, fontWeight: "800", color: "#F8FAFC" },
+  timelineDesc: { fontSize: 12, color: "#CBD5E1", marginTop: 2, lineHeight: 17 },
   emptyWrap: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 30, gap: 12 },
   emptyIcon: {
-    width: 72, height: 72, borderRadius: 36, backgroundColor: "#DCFCE7",
+    width: 72, height: 72, borderRadius: 36, backgroundColor: "rgba(16,185,129,0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(110,231,183,0.5)",
     alignItems: "center", justifyContent: "center",
   },
-  emptyTitle: { fontSize: 20, fontWeight: "800", color: "#0F172A" },
-  emptyText: { fontSize: 14, color: "#64748B", textAlign: "center", lineHeight: 21 },
+  emptyTitle: { fontSize: 20, fontWeight: "900", color: "#F8FAFC" },
+  emptyText: { fontSize: 14, color: "#CBD5E1", textAlign: "center", lineHeight: 21 },
+  offersButton: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    backgroundColor: "#F97316",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  offersButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
 });

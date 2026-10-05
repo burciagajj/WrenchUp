@@ -1,10 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   calculateStripeFee,
   formatCardBrand,
   maskCardNumber,
   amountToStripeAmount,
+  shouldShowTestCardButton,
 } from "../stripe";
+import { shouldUseMockPayments } from "../mock-payments";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("Stripe Helpers", () => {
   describe("calculateStripeFee", () => {
@@ -81,6 +87,91 @@ describe("Stripe Helpers", () => {
     it("should round to nearest cent", () => {
       const cents = amountToStripeAmount(99.999, "usd");
       expect(cents).toBe(10000);
+    });
+  });
+
+  describe("shouldShowTestCardButton", () => {
+    it("should show the test card button in dev when a test publishable key is configured", () => {
+      vi.stubEnv("EXPO_PUBLIC_STRIPE_TEST_PUBLISHABLE_KEY", "pk_test_1234567890");
+      vi.stubEnv("EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY", "");
+      vi.stubEnv("EXPO_PUBLIC_ENABLE_MOCK_PAYMENTS", "false");
+
+      expect(shouldShowTestCardButton({ isDev: true })).toBe(true);
+    });
+
+    it("should hide the test card button when no test key is configured", () => {
+      vi.stubEnv("EXPO_PUBLIC_STRIPE_TEST_PUBLISHABLE_KEY", "");
+      vi.stubEnv("EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY", "pk_live_1234567890");
+      vi.stubEnv("EXPO_PUBLIC_ENABLE_MOCK_PAYMENTS", "false");
+
+      expect(shouldShowTestCardButton({ isDev: true })).toBe(false);
+    });
+
+    it("should show the test card button when mock payments are enabled in development", () => {
+      expect(
+        shouldShowTestCardButton({
+          isDev: true,
+          appOwnership: "expo",
+          platform: "ios",
+          mockPaymentsFlag: "false",
+        }),
+      ).toBe(true);
+    });
+
+    it("should hide the test card button in a production build even if a test key leaked in", () => {
+      vi.stubEnv("EXPO_PUBLIC_STRIPE_TEST_PUBLISHABLE_KEY", "pk_test_1234567890");
+      vi.stubEnv("EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY", "");
+      vi.stubEnv("EXPO_PUBLIC_ENABLE_MOCK_PAYMENTS", "false");
+
+      // A misconfigured production build could still end up with a pk_test_
+      // key bundled — isDev: false must still hide the button regardless.
+      expect(shouldShowTestCardButton({ isDev: false })).toBe(false);
+    });
+  });
+
+  describe("shouldUseMockPayments", () => {
+    it("should enable mock payments when the explicit dev flag is set", () => {
+      expect(
+        shouldUseMockPayments({
+          isDev: true,
+          appOwnership: "standalone",
+          platform: "ios",
+          mockPaymentsFlag: "true",
+        }),
+      ).toBe(true);
+    });
+
+    it("should auto-enable mock payments in Expo Go during development", () => {
+      expect(
+        shouldUseMockPayments({
+          isDev: true,
+          appOwnership: "expo",
+          platform: "ios",
+          mockPaymentsFlag: "false",
+        }),
+      ).toBe(true);
+    });
+
+    it("should auto-enable mock payments on web during development", () => {
+      expect(
+        shouldUseMockPayments({
+          isDev: true,
+          appOwnership: "standalone",
+          platform: "web",
+          mockPaymentsFlag: "false",
+        }),
+      ).toBe(true);
+    });
+
+    it("should not enable mock payments in production", () => {
+      expect(
+        shouldUseMockPayments({
+          isDev: false,
+          appOwnership: "expo",
+          platform: "web",
+          mockPaymentsFlag: "true",
+        }),
+      ).toBe(false);
     });
   });
 });

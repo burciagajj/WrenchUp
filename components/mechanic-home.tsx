@@ -1,4 +1,15 @@
-import { ScrollView, StyleSheet, Text, View, Pressable, Dimensions, PanResponder, Animated, Alert } from "react-native";
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  Pressable,
+  Dimensions,
+  PanResponder,
+  Animated,
+  Alert,
+  Platform,
+} from "react-native";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter } from "expo-router";
 import { HomeMap } from "@/components/home-map";
@@ -9,14 +20,44 @@ import { PrimaryButton } from "@/components/primary-button";
 import { haptic } from "@/lib/haptics";
 import { notifyNow, scheduleNotificationAt } from "@/lib/notifications";
 import { getServiceType } from "@/lib/seed";
-import type { MechanicJob } from "@/lib/types";
+import type { LocaleCode, MechanicJob } from "@/lib/types";
 import { useAuth } from "@/lib/auth-context";
 import { resolveAuthSession } from "@/lib/resolve-auth-session";
 import { fetchOpenDispatchRequests } from "@/lib/live-dispatch";
+import {
+  buildMechanicJobFromDispatchRequest,
+  isIncomingDispatchForMechanic,
+  mechanicAlreadyHasRequest,
+  mechanicHasBlockingJob,
+  matchesMechanicRegion,
+} from "@/lib/mechanic-dispatch-job";
+import { MechanicSleekToggle } from "@/components/mechanic-sleek-toggle";
 import { useLocaleContext } from "@/hooks/use-locale";
-import { deriveBookedMeta } from "@/lib/booked-trip";
 import { computeMechanicMetrics } from "@/lib/mechanic-metrics";
-import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
+import { localizedServiceName } from "@/lib/service-i18n";
+
+const cardShadow = Platform.select({
+  ios: {
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+  },
+  android: { elevation: 6 },
+  default: {},
+});
+
+function getTimeGreeting(locale: string): string {
+  const hour = new Date().getHours();
+  if (locale === "es-MX") {
+    if (hour < 12) return "Buenos días";
+    if (hour < 18) return "Buenas tardes";
+    return "Buenas noches";
+  }
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
 
 const { height: screenHeight } = Dimensions.get("window");
 const MIN_SHEET_HEIGHT = 80;
@@ -35,17 +76,35 @@ function getDayStartAt4AM(nowMs: number): number {
   return start.getTime();
 }
 
+function getMechanicActivityTimestamp(job: MechanicJob): number {
+  return (
+    job.completedAt ??
+    job.mechanicMarkedDoneAt ??
+    job.acceptedAt ??
+    job.cancelledAt ??
+    job.mechanicOfferSentAt ??
+    job.receivedAt
+  );
+}
+
 function clampSheetHeight(h: number) {
   return Math.max(MIN_SHEET_HEIGHT, Math.min(MAX_SHEET_HEIGHT, h));
+}
+
+function parseDateMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export function MechanicHome() {
   const router = useRouter();
   const { state, dispatch } = useStore();
   const { user } = useAuth();
-  const { locale, region } = useLocaleContext();
+  const { locale, region, formatPrice } = useLocaleContext();
   const isEs = locale === "es-MX";
-  const L = (en: string, es: string) => (isEs ? es : en);
+  const L = useCallback((en: string, es: string) => (isEs ? es : en), [isEs]);
+  const greeting = useMemo(() => getTimeGreeting(locale), [locale]);
   const pending = usePendingMechanicJob();
   const active = useMechanicActiveJob();
   const unreadCount = state.notificationsInbox.filter(
@@ -55,6 +114,7 @@ export function MechanicHome() {
   const sheetHeightRef = useRef(INITIAL_SHEET_HEIGHT);
   const sheetAnim = useRef(new Animated.Value(INITIAL_SHEET_HEIGHT)).current;
   const [sheetHeight, setSheetHeight] = useState(INITIAL_SHEET_HEIGHT);
+  const [showTodayActivity, setShowTodayActivity] = useState(false);
   const scheduledReminderIdsRef = useRef<Set<string>>(new Set());
 
   const applySheetHeight = useCallback(
@@ -126,6 +186,15 @@ export function MechanicHome() {
     };
   }, [state.mechanicJobs]);
   const metrics = useMemo(() => computeMechanicMetrics(state.mechanicJobs), [state.mechanicJobs]);
+  const todayActivity = useMemo(() => {
+    const todayLabel = new Date().toDateString();
+    return [...state.mechanicJobs]
+      .filter((job) => {
+        const activityAt = getMechanicActivityTimestamp(job);
+        return new Date(activityAt).toDateString() === todayLabel;
+      })
+      .sort((a, b) => getMechanicActivityTimestamp(b) - getMechanicActivityTimestamp(a));
+  }, [state.mechanicJobs]);
 
   const isJobPending = useMemo(
     () => state.mechanicJobs.some((j) => j.status === "pending"),
@@ -159,44 +228,65 @@ export function MechanicHome() {
       try {
         const resolved = await resolveAuthSession(user);
         if (!resolved) return;
-        const requests = await fetchOpenDispatchRequests(resolved.sessionToken, user.id, region);
-        const regionSafeRequests = requests.filter((req) => {
-          if (req.region_code === region) return true;
-          if (req.region_code) return false;
-          const normalizedCurrency = (req.currency || "").toUpperCase();
-          return region === "MX" ? normalizedCurrency === "MXN" : normalizedCurrency !== "MXN";
-        });
-        const next = regionSafeRequests.find((req) => !state.mechanicJobs.some((j) => j.remoteRequestId === req.id));
+        const requests = await fetchOpenDispatchRequests(
+          resolved.sessionToken,
+          user.id,
+          state.userName || "Mechanic",
+          region,
+        );
+        const regionSafeRequests = requests.filter((req) => matchesMechanicRegion(req, region));
+        const next = regionSafeRequests.find(
+          (req) =>
+            isIncomingDispatchForMechanic(req, user.id, region) &&
+            !mechanicAlreadyHasRequest(state.mechanicJobs, req.id),
+        );
         if (!next) return;
-        const bookedMeta = deriveBookedMeta(next.scheduled_for ?? null, next.customer_note ?? null);
-        const payout = Number((next.mechanic_payout ?? next.offered_price) || 0);
-        const job: MechanicJob = {
-          id: next.id,
-          remoteRequestId: next.id,
-          isBooked: bookedMeta.isBooked,
-          customerName: next.customer_name ?? "Customer",
-          customerPhotoUrl: next.customer_photo_url ?? null,
-          vehicle: next.vehicle_label,
-          service: next.service_code as any,
-          location: next.location_label,
-          distanceMiles: 1.5,
-          payout: Number.isFinite(payout) ? payout : 0,
-          status: "pending",
-          receivedAt: Date.now(),
-          scheduledFor: bookedMeta.scheduledForMs,
-          customerNote: bookedMeta.cleanNote,
-          customerHasParts: typeof next.customer_has_parts === "boolean" ? next.customer_has_parts : null,
-          issuePhotoUrl: next.issue_photo_url ?? null,
-        };
+        if (mechanicHasBlockingJob(state.mechanicJobs)) return;
+        const job = buildMechanicJobFromDispatchRequest(next, state.userCoords);
         dispatch({ type: "ADD_MECHANIC_JOB", payload: job });
         const service = getServiceType(job.service);
+        if (next.customer_quote_accepted_at) {
+          const customerName = next.customer_name?.trim() || "Customer";
+          const body = `${customerName} has offered you their requested service, accept or decline`;
+          const route = `/mechanic/incoming?id=${encodeURIComponent(job.id)}`;
+          dispatch({
+            type: "UPDATE_MECHANIC_JOB_STATUS",
+            payload: {
+              id: job.id,
+              status: job.status,
+              customerQuoteAcceptedAt: parseDateMs(next.customer_quote_accepted_at),
+            },
+          });
+          dispatch({
+            type: "ADD_INBOX_NOTIFICATION",
+            payload: {
+              id: `customer-service-offer-${next.id}`,
+              title: "Service offered",
+              body,
+              createdAt: Date.now(),
+              roleScope: "mechanic",
+              route,
+              actionType: "customer_service_offer",
+              requestId: next.id,
+            },
+          });
+          notifyNow({
+            title: "Service offered",
+            body,
+            data: {
+              kind: "customer_service_offer",
+              requestId: next.id,
+              route,
+            },
+          });
+        }
         if (job.isBooked) {
           dispatch({
             type: "ADD_INBOX_NOTIFICATION",
             payload: {
               id: `booked-available-${job.id}`,
               title: L("Booked job available", "Servicio agendado disponible"),
-              body: `${job.customerName} • ${service?.name ?? L("Service", "Servicio")} • $${job.payout.toFixed(2)}`,
+              body: `${job.customerName} • ${service?.name ?? L("Service", "Servicio")} • ${formatPrice(job.payout)}`,
               createdAt: Date.now(),
               roleScope: "mechanic",
               route: `/mechanic/incoming?id=${encodeURIComponent(job.id)}`,
@@ -205,7 +295,7 @@ export function MechanicHome() {
         }
         notifyNow({
           title: job.isBooked ? L("Booked job available", "Servicio agendado disponible") : L("New job request", "Nueva solicitud de trabajo"),
-          body: `${service?.name ?? "Service"} • $${job.payout.toFixed(2)}`,
+          body: `${service?.name ?? "Service"} • ${formatPrice(job.payout)}`,
           data: { kind: "mechanic_request", id: job.id },
         });
         haptic.medium();
@@ -235,7 +325,7 @@ export function MechanicHome() {
     if (!pending) {
       lastRoutedPendingIdRef.current = null;
     }
-  }, [pending?.id, router]);
+  }, [pending, router]);
 
   // Schedule one-hour reminders for accepted booked jobs.
   useEffect(() => {
@@ -270,7 +360,7 @@ export function MechanicHome() {
       payload: { id: active.id, status: "upcoming" },
     });
     router.replace(`/mechanic/booked?id=${encodeURIComponent(active.id)}` as any);
-  }, [active?.id, active?.status, active?.scheduledFor, dispatch, router]);
+  }, [active, dispatch, router]);
 
   // Booked jobs should only enter live trip flow at/after scheduled time.
   useEffect(() => {
@@ -295,6 +385,17 @@ export function MechanicHome() {
 
   const switchToCustomer = () => {
     haptic.selection();
+    if (state.mechanicOnline) {
+      haptic.warning();
+      Alert.alert(
+        L("Go offline first", "Primero ponte fuera de línea"),
+        L(
+          "Turn off online mode before switching to customer mode.",
+          "Desactiva el modo en línea antes de cambiar a modo cliente.",
+        ),
+      );
+      return;
+    }
     Alert.alert(
       L("Change mode", "Cambiar modo"),
       L("Are you sure you want to switch to customer mode?", "¿Seguro que quieres cambiar a modo cliente?"),
@@ -320,9 +421,9 @@ export function MechanicHome() {
         <DrawerMenuButton variant="map" />
         <Pressable
           onPress={() => router.push("/notifications" as any)}
-          style={styles.mapBellBtn}
+          style={({ pressed }) => [styles.mapBellBtn, pressed && { opacity: 0.9 }]}
         >
-          <IconSymbol name="bell.fill" size={16} color="#F8FAFC" />
+          <IconSymbol name="bell.fill" size={18} color="#F8FAFC" />
           {unreadCount > 0 ? (
             <View style={styles.mapBellBadge}>
               <Text style={styles.mapBellBadgeText}>{Math.min(99, unreadCount)}</Text>
@@ -331,33 +432,22 @@ export function MechanicHome() {
         </Pressable>
         <View style={styles.earningsPillWrap} pointerEvents="none">
           <View style={styles.earningsPill}>
-            <Text style={styles.earningsPillValue}>${stats.earningsToday.toFixed(2)}</Text>
-            <Text style={styles.earningsPillLabel}>
-              {L("Earnings", "Ganancias")} | {stats.servicesToday} {L("services done", "servicios")}
-            </Text>
+            <View style={styles.earningsPillIcon}>
+              <IconSymbol name="dollarsign.circle.fill" size={14} color="#FDBA74" />
+            </View>
+            <View>
+              <Text style={styles.earningsPillValue}>{formatPrice(stats.earningsToday)}</Text>
+              <Text style={styles.earningsPillLabel}>
+                {L("Today", "Hoy")} • {stats.servicesToday}{" "}
+                {stats.servicesToday === 1 ? L("job", "trabajo") : L("jobs", "trabajos")}
+              </Text>
+            </View>
           </View>
         </View>
       </View>
 
       {/* Collapsible Bottom Sheet */}
-      <Animated.View
-        style={{
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: sheetAnim,
-          backgroundColor: "rgba(5, 11, 24, 0.97)",
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 0.1,
-          shadowRadius: 8,
-          elevation: 5,
-          overflow: "hidden",
-        }}
-      >
+      <Animated.View style={[styles.sheet, { height: sheetAnim }]}>
         <View
           style={styles.sheetHandleZone}
           {...panResponder.panHandlers}
@@ -371,54 +461,71 @@ export function MechanicHome() {
           scrollEnabled={sheetHeight >= MAX_SHEET_HEIGHT * 0.85}
         >
           <View style={styles.sheetContent}>
-            {/* Header */}
             <View style={styles.headerPad}>
-              <Text style={styles.greeting}>{L("Mechanic dashboard", "Panel de mecánico")}</Text>
-              <Text style={styles.userName}>{state.userName}</Text>
+              <View style={styles.headerRow}>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={styles.greetingEyebrow}>{greeting}</Text>
+                  <Text style={styles.userName}>{state.userName || L("Mechanic", "Mecánico")}</Text>
+                  <Text style={styles.greetingSub}>
+                    {L("Your mechanic command center", "Tu centro de control de mecánico")}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.statusPill,
+                    state.mechanicOnline ? styles.statusPillOnline : styles.statusPillOffline,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.statusDot,
+                      state.mechanicOnline ? styles.statusDotOnline : styles.statusDotOffline,
+                    ]}
+                  />
+                  <Text style={styles.statusPillText}>
+                    {state.mechanicOnline ? L("ONLINE", "EN LÍNEA") : L("OFFLINE", "FUERA DE LÍNEA")}
+                  </Text>
+                </View>
+              </View>
             </View>
 
-            {/* Primary Go Online CTA */}
-            <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
-              <Pressable
-                onPress={() => {
-                  if (state.mechanicOnline) {
+            <View style={styles.toggleSection}>
+              <MechanicSleekToggle />
+            </View>
+
+            {pending ? (
+              <View style={styles.bannerSection}>
+                <Pressable
+                  onPress={() => {
                     haptic.light();
-                    return;
-                  }
-                  dispatch({ type: "SET_MECHANIC_ONLINE", payload: true });
-                  haptic.success();
-                }}
-                style={({ pressed }) => [
-                  styles.goOnlineButton,
-                  pressed && { opacity: 0.92, transform: [{ scale: 0.995 }] },
-                ]}
-              >
-                <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
-                  <Defs>
-                    <LinearGradient id="goOnlineGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <Stop offset="0%" stopColor="#35D9CC" />
-                      <Stop offset="100%" stopColor="#F08B44" />
-                    </LinearGradient>
-                  </Defs>
-                  <Rect x="0" y="0" width="100%" height="100%" rx="20" ry="20" fill="url(#goOnlineGradient)" />
-                </Svg>
-                <View style={styles.goOnlineContent}>
-                  <View style={styles.goOnlineIcon}>
-                    <IconSymbol name="bolt.fill" size={16} color="#FFFFFF" />
+                    router.push({ pathname: "/mechanic/incoming" as any, params: { id: pending.id } } as any);
+                  }}
+                  style={({ pressed }) => [styles.jobBanner, pressed && { opacity: 0.92 }]}
+                >
+                  <View style={styles.bannerIconWrap}>
+                    <IconSymbol name="bell.badge.fill" size={18} color="#FDBA74" />
                   </View>
-                  <View>
-                    <Text style={styles.goOnlineTitle}>{L("GO ONLINE", "PONTE EN LÍNEA")}</Text>
-                    <Text style={styles.goOnlineSubtitle}>
-                      {L("Start receiving jobs now", "Empieza a recibir trabajos ahora")}
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <View style={styles.livePill}>
+                      <View style={styles.liveDot} />
+                      <Text style={styles.livePillText}>{L("INCOMING REQUEST", "SOLICITUD ENTRANTE")}</Text>
+                    </View>
+                    <Text style={styles.bannerTitle}>
+                      {pending.isBooked
+                        ? L("New booked job offer", "Nueva oferta de trabajo agendado")
+                        : L("New service request", "Nueva solicitud de servicio")}
+                    </Text>
+                    <Text style={styles.bannerSubtitle}>
+                      {pending.customerName} • {formatPrice(pending.payout)}
                     </Text>
                   </View>
-                </View>
-              </Pressable>
-            </View>
+                  <IconSymbol name="chevron.right" size={16} color="#94A3B8" />
+                </Pressable>
+              </View>
+            ) : null}
 
-            {/* Active job pill */}
             {active ? (
-              <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
+              <View style={styles.bannerSection}>
                 <Pressable
                   onPress={() => {
                     haptic.light();
@@ -427,65 +534,138 @@ export function MechanicHome() {
                       (typeof active.scheduledFor === "number" && active.scheduledFor > Date.now());
                     router.push((isFutureBooked ? `/mechanic/booked?id=${encodeURIComponent(active.id)}` : "/mechanic/active") as any);
                   }}
-                  style={({ pressed }) => [styles.activeBanner, pressed && { opacity: 0.9 }]}
+                  style={({ pressed }) => [styles.jobBanner, pressed && { opacity: 0.92 }]}
                 >
-                  <View style={styles.activeIcon}>
-                    <IconSymbol name="wrench.fill" size={20} color="#FFFFFF" />
+                  <View style={styles.bannerIconWrap}>
+                    <IconSymbol
+                      name={active.status === "upcoming" ? "clock.fill" : "wrench.fill"}
+                      size={18}
+                      color="#FDBA74"
+                    />
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.activeTitle}>{L("Active job in progress", "Trabajo activo en progreso")}</Text>
-                    <Text style={styles.activeSub}>
-                      {active.customerName} • ${active.payout.toFixed(2)}
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <View style={styles.livePill}>
+                      <View style={styles.liveDot} />
+                      <Text style={styles.livePillText}>
+                        {active.status === "upcoming"
+                          ? L("UPCOMING JOB", "TRABAJO PRÓXIMO")
+                          : L("ACTIVE JOB", "TRABAJO ACTIVO")}
+                      </Text>
+                    </View>
+                    <Text style={styles.bannerTitle}>
+                      {active.status === "upcoming"
+                        ? L("Booked job on your schedule", "Trabajo agendado en tu horario")
+                        : L("Job in progress", "Trabajo en progreso")}
+                    </Text>
+                    <Text style={styles.bannerSubtitle}>
+                      {active.customerName} • {formatPrice(active.payout)}
                     </Text>
                   </View>
-                  <IconSymbol name="chevron.right" size={20} color="#FFFFFF" />
+                  <IconSymbol name="chevron.right" size={16} color="#94A3B8" />
                 </Pressable>
               </View>
             ) : null}
 
-            {/* Stats */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>{L("Today's stats", "Estadísticas de hoy")}</Text>
-              <View style={styles.statsRow}>
-                <View style={styles.statBox}>
-                  <Text style={styles.statValue}>${stats.earnings.toFixed(2)}</Text>
-                  <Text style={styles.statLabel}>{L("Earnings", "Ganancias")}</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statBox}>
-                  <Text style={styles.statValue}>{stats.count}</Text>
-                  <Text style={styles.statLabel}>{L("Jobs done", "Trabajos")}</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statBox}>
-                  <Text style={styles.statValue}>{metrics.acceptanceRate}%</Text>
-                  <Text style={styles.statLabel}>{L("Acceptance", "Aceptación")}</Text>
-                </View>
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryLabel}>{L("Lifetime earnings", "Ganancias totales")}</Text>
+                <Text style={styles.summaryValue}>{formatPrice(stats.earnings)}</Text>
+              </View>
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryLabel}>{L("Jobs completed", "Trabajos completados")}</Text>
+                <Text style={styles.summaryValue}>{stats.count}</Text>
               </View>
             </View>
 
-            {/* Recent activity */}
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>{L("Recent activity", "Actividad reciente")}</Text>
-              {state.mechanicJobs.length === 0 ? (
-                <View style={styles.emptyCard}>
-                  <View style={styles.emptyIcon}>
-                    <IconSymbol name="bolt.fill" size={26} color="#F97316" />
-                  </View>
-                  <Text style={styles.emptyTitle}>{L("No jobs yet", "Aún no hay trabajos")}</Text>
-                  <Text style={styles.emptyText}>
-                    {L(
-                      "Go online and we'll route incoming requests to you here.",
-                      "Ponte en línea y te enviaremos aquí las solicitudes entrantes."
-                    )}
-                  </Text>
-                </View>
-              ) : (
-                state.mechanicJobs.slice(0, 6).map((j) => <MechanicJobRow key={j.id} job={j} />)
-              )}
+              <Text style={styles.sectionEyebrow}>{L("Driver stats", "Estadísticas del conductor")}</Text>
+              <View style={styles.driverStatsGrid}>
+                <DriverStatCard
+                  icon="wrench.fill"
+                  iconColor="#F97316"
+                  label={L("Jobs done", "Trabajos")}
+                  value={`${stats.count}`}
+                />
+                <DriverStatCard
+                  icon="star.fill"
+                  iconColor="#35D9CC"
+                  label={L("Acceptance", "Aceptación")}
+                  value={`${metrics.acceptanceRate}%`}
+                />
+                <DriverStatCard
+                  icon="xmark"
+                  iconColor="#FB7185"
+                  label={L("Cancellation", "Cancelación")}
+                  value={`${metrics.cancellationRate}%`}
+                />
+                <DriverStatCard
+                  icon="checkmark.circle.fill"
+                  iconColor="#2FDFC4"
+                  label={L("Completion", "Finalización")}
+                  value={`${metrics.completionRate}%`}
+                />
+              </View>
             </View>
 
-            <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
+            <View style={styles.section}>
+              <Pressable
+                onPress={() => {
+                  haptic.selection();
+                  setShowTodayActivity((current) => !current);
+                }}
+                style={({ pressed }) => [styles.todayActivityHeader, pressed && { opacity: 0.9 }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionEyebrow}>{L("Today's activity", "Actividad de hoy")}</Text>
+                  <Text style={styles.todayActivityHint}>
+                    {showTodayActivity
+                      ? L("Tap to hide today's jobs", "Toca para ocultar los trabajos de hoy")
+                      : L("Tap to show today's jobs", "Toca para mostrar los trabajos de hoy")}
+                  </Text>
+                </View>
+                <View style={styles.todayActivityMeta}>
+                  <View style={styles.todayActivityCountBadge}>
+                    <Text style={styles.todayActivityCount}>{todayActivity.length}</Text>
+                  </View>
+                  <IconSymbol
+                    name={showTodayActivity ? "chevron.up" : "chevron.down"}
+                    size={14}
+                    color="#F97316"
+                  />
+                </View>
+              </Pressable>
+              {showTodayActivity ? (
+                todayActivity.length === 0 ? (
+                  <View style={styles.emptyCard}>
+                    <View style={styles.emptyIcon}>
+                      <IconSymbol name="bolt.fill" size={24} color="#F97316" />
+                    </View>
+                    <Text style={styles.emptyTitle}>{L("No activity yet today", "Aún no hay actividad hoy")}</Text>
+                    <Text style={styles.emptyText}>
+                      {L(
+                        "Completed jobs and updates will appear here throughout the day.",
+                        "Los trabajos completados y actualizaciones aparecerán aquí durante el día.",
+                      )}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.activityList}>
+                    {todayActivity.slice(0, 6).map((j) => (
+                      <MechanicJobRow
+                        key={j.id}
+                        job={j}
+                        activityAt={getMechanicActivityTimestamp(j)}
+                        locale={locale}
+                        formatPrice={formatPrice}
+                        L={L}
+                      />
+                    ))}
+                  </View>
+                )
+              ) : null}
+            </View>
+
+            <View style={styles.switchSection}>
               <PrimaryButton
                 title={L("Switch to customer mode", "Cambiar a modo cliente")}
                 variant="warm"
@@ -499,12 +679,27 @@ export function MechanicHome() {
   );
 }
 
-function MechanicJobRow({ job }: { job: MechanicJob }) {
+function MechanicJobRow({
+  job,
+  activityAt,
+  locale,
+  formatPrice,
+  L,
+}: {
+  job: MechanicJob;
+  activityAt: number;
+  locale: LocaleCode;
+  formatPrice: (amount: number) => string;
+  L: (en: string, es: string) => string;
+}) {
   const service = getServiceType(job.service);
-  const time = new Date(job.receivedAt).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const dateLocale = locale === "es-MX" ? "es-MX" : "en-US";
+  const time = new Intl.DateTimeFormat(dateLocale, { hour: "numeric", minute: "2-digit" }).format(
+    new Date(activityAt),
+  );
+  const serviceName = service
+    ? localizedServiceName(service.code, locale)
+    : L("Service", "Servicio");
   return (
     <View style={styles.jobRow}>
       <View style={styles.jobIcon}>
@@ -512,31 +707,94 @@ function MechanicJobRow({ job }: { job: MechanicJob }) {
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.jobTitle}>
-          {service?.name ?? "Service"} • {job.customerName}
+          {serviceName} • {job.customerName}
         </Text>
         <Text style={styles.jobMeta}>
-          {time} • {statusLabel(job.status)}
+          {time} • {localizedStatusLabel(job.status, L)}
         </Text>
       </View>
-      <Text style={styles.jobPay}>${job.payout.toFixed(2)}</Text>
+      <Text style={styles.jobPay}>{formatPrice(job.payout)}</Text>
     </View>
   );
 }
 
-function statusLabel(s: string): string {
-  return s.replace(/_/g, " ");
+function DriverStatCard({
+  icon,
+  iconColor,
+  label,
+  value,
+}: {
+  icon: string;
+  iconColor: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.driverStatCard}>
+      <View style={[styles.driverStatIcon, { backgroundColor: `${iconColor}22` }]}>
+        <IconSymbol name={icon} size={14} color={iconColor} />
+      </View>
+      <Text style={styles.driverStatLabel}>{label}</Text>
+      <Text style={[styles.driverStatValue, { color: iconColor }]}>{value}</Text>
+    </View>
+  );
+}
+
+function localizedStatusLabel(status: string, L: (en: string, es: string) => string): string {
+  const labels: Record<string, [string, string]> = {
+    pending: ["Pending", "Pendiente"],
+    upcoming: ["Upcoming", "Próximo"],
+    heading_there: ["Heading there", "En camino"],
+    arrived: ["Arrived", "Llegó"],
+    in_progress: ["In progress", "En progreso"],
+    completed: ["Completed", "Completado"],
+    cancelled: ["Cancelled", "Cancelado"],
+    declined: ["Declined", "Rechazado"],
+  };
+  const pair = labels[status];
+  return pair ? L(pair[0], pair[1]) : status.replace(/_/g, " ");
 }
 
 const styles = StyleSheet.create({
+  sheet: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "rgba(11, 15, 22, 0.98)",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderColor: "rgba(255,255,255,0.08)",
+    overflow: "hidden",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: -8 },
+        shadowOpacity: 0.28,
+        shadowRadius: 20,
+      },
+      android: { elevation: 12 },
+      default: {},
+    }),
+  },
   sheetHandleZone: {
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingTop: 10,
+    paddingBottom: 6,
   },
+  sheetHandle: {
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(148,163,184,0.45)",
+  },
+  sheetContent: {},
   earningsPillWrap: {
     position: "absolute",
-    top: 52,
+    top: 56,
     left: 0,
     right: 0,
     alignItems: "center",
@@ -546,27 +804,30 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 56,
     right: 18,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(11,19,42,0.92)",
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: "#0B1220",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.2)",
+    borderColor: "rgba(255,255,255,0.08)",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 40,
+    ...cardShadow,
   },
   mapBellBadge: {
     position: "absolute",
-    top: -4,
-    right: -4,
-    minWidth: 16,
-    height: 16,
-    paddingHorizontal: 3,
-    borderRadius: 8,
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
     backgroundColor: "#F97316",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#0B1220",
   },
   mapBellBadgeText: {
     color: "#FFFFFF",
@@ -574,147 +835,274 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   earningsPill: {
-    minWidth: 108,
-    borderRadius: 999,
-    backgroundColor: "rgba(15, 23, 42, 0.9)",
-    borderWidth: 1,
-    borderColor: "rgba(148, 163, 184, 0.35)",
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    flexDirection: "row",
     alignItems: "center",
+    gap: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(11,18,32,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(249,115,22,0.28)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    ...cardShadow,
+  },
+  earningsPillIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: "rgba(249,115,22,0.14)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   earningsPillValue: {
     color: "#F8FAFC",
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "900",
+    lineHeight: 20,
   },
   earningsPillLabel: {
-    color: "#FB923C",
-    fontSize: 10,
+    color: "#FDBA74",
+    fontSize: 11,
     fontWeight: "700",
-    marginTop: -1,
+    marginTop: 1,
   },
-  sheetHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "#cbd5e1",
-  },
-  sheetContent: {},
-  headerPad: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 0 },
-  greeting: { color: "#C2410C", fontSize: 14, fontWeight: "600" },
-  userName: { color: "#F8FAFC", fontSize: 28, fontWeight: "800", marginTop: 2 },
-  goOnlineButton: {
-    marginTop: 12,
-    height: 92,
-    borderRadius: 20,
-    overflow: "hidden",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.32)",
-    shadowColor: "#F08B44",
-    shadowOpacity: 0.52,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 12,
-  },
-  goOnlineContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 18,
-    gap: 12,
-  },
-  goOnlineIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(0,0,0,0.22)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  goOnlineTitle: {
-    color: "#FFFFFF",
-    fontSize: 24,
-    fontWeight: "900",
-    letterSpacing: 0.3,
-  },
-  goOnlineSubtitle: {
-    color: "rgba(255,255,255,0.95)",
-    fontSize: 13,
+  headerPad: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 0 },
+  headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  greetingEyebrow: {
+    color: "#FDBA74",
+    fontSize: 12,
     fontWeight: "800",
-    marginTop: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
-  activeBanner: {
-    backgroundColor: "#10B981",
-    borderRadius: 16,
-    padding: 14,
+  userName: { color: "#F8FAFC", fontSize: 24, fontWeight: "800", lineHeight: 30 },
+  greetingSub: { color: "#94A3B8", fontSize: 13, marginTop: 2 },
+  statusPill: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  activeIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  activeTitle: { color: "#FFFFFF", fontWeight: "800", fontSize: 14 },
-  activeSub: { color: "#D1FAE5", fontSize: 12, marginTop: 2 },
-  section: { paddingHorizontal: 20, marginTop: 22 },
-  sectionTitle: { fontSize: 13, color: "#F08B44", fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 },
-  statsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#0F172A",
-    paddingVertical: 16,
-    borderRadius: 16,
-  },
-  statBox: { flex: 1, alignItems: "center" },
-  statValue: { fontSize: 18, fontWeight: "800", color: "#FFFFFF" },
-  statLabel: { fontSize: 11, color: "#F08B44", marginTop: 4, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },
-  statDivider: { width: 1, height: 30, backgroundColor: "#1F2937" },
-  emptyCard: {
-    backgroundColor: "#0F172A",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#334155",
-    padding: 18,
     alignItems: "center",
     gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+  },
+  statusPillOnline: {
+    backgroundColor: "rgba(16,185,129,0.12)",
+    borderColor: "rgba(16,185,129,0.35)",
+  },
+  statusPillOffline: {
+    backgroundColor: "rgba(148,163,184,0.10)",
+    borderColor: "rgba(148,163,184,0.25)",
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  statusDotOnline: { backgroundColor: "#10B981" },
+  statusDotOffline: { backgroundColor: "#94A3B8" },
+  statusPillText: {
+    color: "#F8FAFC",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  toggleSection: { paddingHorizontal: 20, marginTop: 14, marginBottom: 4 },
+  bannerSection: { paddingHorizontal: 20, marginTop: 12 },
+  jobBanner: {
+    borderRadius: 20,
+    backgroundColor: "#0B1220",
+    borderWidth: 1,
+    borderColor: "rgba(249,115,22,0.28)",
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    ...cardShadow,
+  },
+  bannerIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: "rgba(249,115,22,0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  livePill: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(249,115,22,0.14)",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#F97316",
+  },
+  livePillText: {
+    color: "#FDBA74",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+  },
+  bannerTitle: { color: "#F8FAFC", fontSize: 16, fontWeight: "800" },
+  bannerSubtitle: { color: "#94A3B8", fontSize: 13, lineHeight: 18 },
+  summaryRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 20,
+    marginTop: 16,
+  },
+  summaryCard: {
+    flex: 1,
+    borderRadius: 16,
+    backgroundColor: "#111827",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    padding: 14,
+    ...cardShadow,
+  },
+  summaryLabel: {
+    color: "#94A3B8",
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  summaryValue: {
+    color: "#FDBA74",
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+  section: { paddingHorizontal: 20, marginTop: 20 },
+  sectionEyebrow: {
+    fontSize: 18,
+    color: "#F8FAFC",
+    fontWeight: "800",
+    marginBottom: 10,
+  },
+  emptyCard: {
+    backgroundColor: "#111827",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    padding: 20,
+    alignItems: "center",
+    gap: 6,
+    ...cardShadow,
   },
   emptyIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#FFEDD5",
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: "rgba(249,115,22,0.12)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 4,
   },
   emptyTitle: { fontSize: 16, fontWeight: "800", color: "#F8FAFC" },
-  emptyText: { fontSize: 13, color: "#35D9CC", textAlign: "center", lineHeight: 18 },
+  emptyText: { fontSize: 13, color: "#94A3B8", textAlign: "center", lineHeight: 18 },
+  activityList: { gap: 8 },
   jobRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#0F172A",
-    borderRadius: 12,
+    backgroundColor: "#111827",
+    borderRadius: 16,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#334155",
-    marginBottom: 8,
+    borderColor: "rgba(255,255,255,0.08)",
+    ...cardShadow,
   },
   jobIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#FFEDD5",
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "rgba(249,115,22,0.12)",
     alignItems: "center",
     justifyContent: "center",
   },
   jobTitle: { fontSize: 14, fontWeight: "700", color: "#F8FAFC" },
-  jobMeta: { fontSize: 12, color: "#35D9CC", marginTop: 2, textTransform: "capitalize" },
-  jobPay: { fontSize: 15, fontWeight: "800", color: "#F8FAFC" },
+  jobMeta: { fontSize: 12, color: "#94A3B8", marginTop: 2 },
+  jobPay: { fontSize: 15, fontWeight: "800", color: "#FDBA74" },
+  driverStatsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  driverStatCard: {
+    width: "48%",
+    backgroundColor: "#111827",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    padding: 14,
+    minHeight: 100,
+    justifyContent: "space-between",
+    ...cardShadow,
+  },
+  driverStatIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  driverStatLabel: {
+    color: "#94A3B8",
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginTop: 10,
+  },
+  driverStatValue: {
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  todayActivityHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 4,
+    marginBottom: 4,
+  },
+  todayActivityHint: {
+    color: "#94A3B8",
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  todayActivityMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  todayActivityCountBadge: {
+    minWidth: 28,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: "rgba(249,115,22,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(249,115,22,0.22)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  todayActivityCount: {
+    color: "#FDBA74",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  switchSection: { paddingHorizontal: 20, marginTop: 18, marginBottom: 8 },
 });
+
+ 

@@ -7,7 +7,7 @@ export default function PrivacyScreen() {
   const router = useRouter();
 
   return (
-    <ScreenContainer edges={["top", "left", "right", "bottom"]}>
+    <ScreenContainer edges={["left", "right", "bottom"]} showBackButton title="Privacy Policy">
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={10}>
           <IconSymbol name="chevron.left" size={22} color="#0F172A" />

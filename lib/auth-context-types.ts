@@ -7,7 +7,10 @@ export type AuthUser = {
   id: string;
   email: string;
   role: "customer" | "mechanic";
+  fullName?: string | null;
+  displayName?: string | null;
   profileCompleted: boolean;
+  emailConfirmed?: boolean;
 };
 
 export type AuthError = {

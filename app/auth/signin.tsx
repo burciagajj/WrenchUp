@@ -4,7 +4,7 @@
  * Fix: Moved all useState hooks above early return to comply with React rules of hooks
  */
 
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -12,30 +12,35 @@ import {
   Pressable,
   ScrollView,
   ActivityIndicator,
+  StyleSheet,
 } from "react-native";
-import { Redirect, router } from "expo-router";
+import { Redirect } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
-import { useAuth } from "../../lib/auth-context";
+import {
+  useAuth,
+  useLoadUserData,
+  useClearUserData,
+} from "@/lib/auth-context";
 import { getSessionToken } from "@/lib/session-tokens";
-import { safeReplace } from "@/lib/safe-router";
+import { safeReplace, safePush } from "@/lib/safe-router";
 import { supabaseAuth } from "@/lib/_core/supabase-auth";
-import { syncUserDataToStore } from "@/lib/load-user-data";
-import { useStore } from "@/lib/store";
-import { useT } from "@/hooks/use-locale";
+import { useT, useL } from "@/hooks/use-locale";
 import { useRegionBootstrap } from "@/hooks/use-region-bootstrap";
 import * as Haptics from "expo-haptics";
+import * as LocalAuthentication from "expo-local-authentication";
 
 export default function SignInScreen() {
-  const AUTH_COOLDOWN_SECONDS = 4;
   // ─── All hooks must come first — no early returns before this block ───
   const {
     signIn: authSignIn,
     isAuthenticated,
     isLoading: authLoading,
   } = useAuth();
-  const { dispatch } = useStore();
+  const loadUserData = useLoadUserData();
+  const clearUserData = useClearUserData();
   const t = useT();
-  useRegionBootstrap({ eager: false });
+  const L = useL();
+  useRegionBootstrap({ eager: true });
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -46,16 +51,18 @@ export default function SignInScreen() {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotSuccess, setForgotSuccess] = useState(false);
-  const [cooldownLeft, setCooldownLeft] = useState(0);
-  // ─────────────────────────────────────────────────────────────────────
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [useBiometric, setUseBiometric] = useState(false);
 
+  // Check for biometrics on mount (additional authentication layer)
   useEffect(() => {
-    if (cooldownLeft <= 0) return;
-    const timer = setInterval(() => {
-      setCooldownLeft((prev) => Math.max(0, prev - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [cooldownLeft]);
+    (async () => {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      setBiometricAvailable(hasHardware && isEnrolled);
+    })();
+  }, []);
+  // ─────────────────────────────────────────────────────────────────────
 
   // Safe to early return after all hooks have been called
   if (!authLoading && isAuthenticated) {
@@ -82,26 +89,38 @@ export default function SignInScreen() {
   };
 
   const handleSignIn = async () => {
-    if (cooldownLeft > 0 || loading) return;
     if (!validateForm()) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       return;
     }
 
     setLoading(true);
-    setCooldownLeft(AUTH_COOLDOWN_SECONDS);
     setError(null);
 
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      const authUser = await authSignIn(email.trim().toLowerCase(), password);
+      // Extra auth layer: biometric verification if enabled and available
+      if (biometricAvailable && useBiometric) {
+        const bioResult = await LocalAuthentication.authenticateAsync({
+          promptMessage: L("Verify your identity for login", "Verifica tu identidad para iniciar sesión"),
+          fallbackLabel: L("Use passcode", "Usar código"),
+        });
+        if (!bioResult.success) {
+          setError(L("Biometric verification required", "Se requiere verificación biométrica"));
+          setLoading(false);
+          return;
+        }
+      }
 
-      dispatch({ type: "CLEAR_USER_DATA" });
-      dispatch({ type: "SET_ROLE", payload: authUser.role });
+      const authUser = await authSignIn(email.trim().toLowerCase(), password);
+      // Must fully finish before loading the new user's data — clearUserData()
+      // and loadUserData() both dispatch async, and if load's dispatch lands
+      // first, the subsequent clear would wipe the profile we just loaded.
+      await clearUserData();
       const sessionToken = await getSessionToken();
       if (sessionToken) {
-        await syncUserDataToStore(dispatch, authUser, sessionToken);
+        await loadUserData(sessionToken, authUser);
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -112,8 +131,6 @@ export default function SignInScreen() {
         safeReplace("/auth/profile-complete");
       }
     } catch (err: any) {
-      console.error("[SignIn] Error:", err);
-
       const errorCode = err?.code || "";
       let message = t("auth.signin.error_failed");
       if (
@@ -123,6 +140,11 @@ export default function SignInScreen() {
         message = t("auth.signin.error_invalid_credentials");
       } else if (errorCode === "user_not_found") {
         message = t("auth.signin.error_user_not_found");
+      } else if (errorCode === "email_not_confirmed") {
+        message = L(
+          "Email confirmation is still enabled in your Supabase project. Turn off Confirm email in the dashboard to test sign-in without verification.",
+          "La confirmación de email sigue activada en tu proyecto de Supabase. Desactiva Confirm email en el panel para probar el inicio de sesión sin verificación."
+        );
       } else if (err?.message) {
         message = err.message;
       }
@@ -165,11 +187,13 @@ export default function SignInScreen() {
 
   if (showForgotPassword) {
     return (
-      <ScreenContainer className="bg-background">
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1 }}
-          className="px-6 py-8"
-        >
+      <View style={{ flex: 1, backgroundColor: "#0B1220" }}>
+        <ScreenContainer containerClassName="bg-background" className="bg-background">
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1 }}
+            className="px-6 py-8 bg-background"
+            keyboardShouldPersistTaps="handled"
+          >
           <View className="mb-8">
             <Text className="text-3xl font-bold text-foreground mb-2">
               {t("auth.forgot.title")}
@@ -203,7 +227,7 @@ export default function SignInScreen() {
                   value={forgotEmail}
                   onChangeText={setForgotEmail}
                   placeholder="your@email.com"
-                  placeholderTextColor="#999"
+                  placeholderTextColor="#64748B"
                   keyboardType="email-address"
                   autoCapitalize="none"
                   editable={!forgotLoading}
@@ -214,9 +238,7 @@ export default function SignInScreen() {
               <Pressable
                 onPress={handleForgotPassword}
                 disabled={forgotLoading}
-                className={`py-4 rounded-lg flex-row items-center justify-center ${
-                  forgotLoading ? "bg-primary/50" : "bg-primary"
-                }`}
+                style={[styles.primaryButton, forgotLoading && styles.primaryButtonDisabled]}
               >
                 {forgotLoading ? (
                   <ActivityIndicator color="#fff" size="small" />
@@ -235,7 +257,7 @@ export default function SignInScreen() {
               setForgotSuccess(false);
               setError(null);
             }}
-            className="mt-6"
+            style={styles.secondaryLinkButton}
           >
             <Text className="text-center text-primary font-semibold">
               {t("auth.forgot.back")}
@@ -243,12 +265,18 @@ export default function SignInScreen() {
           </Pressable>
         </ScrollView>
       </ScreenContainer>
+      </View>
     );
   }
 
   return (
-    <ScreenContainer className="bg-background">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="px-6 py-8">
+    <View style={{ flex: 1, backgroundColor: "#0B1220" }}>
+      <ScreenContainer containerClassName="bg-background" className="bg-background">
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          className="px-6 py-8 bg-background"
+          keyboardShouldPersistTaps="handled"
+        >
         <View className="mb-8">
           <Text className="text-4xl font-bold text-foreground mb-2">
             {t("auth.signin.title")}
@@ -272,7 +300,7 @@ export default function SignInScreen() {
             value={email}
             onChangeText={setEmail}
             placeholder="your@email.com"
-            placeholderTextColor="#999"
+            placeholderTextColor="#64748B"
             keyboardType="email-address"
             autoCapitalize="none"
             editable={!loading}
@@ -289,14 +317,14 @@ export default function SignInScreen() {
               value={password}
               onChangeText={setPassword}
               placeholder={t("auth.signin.password_placeholder")}
-              placeholderTextColor="#999"
+              placeholderTextColor="#64748B"
               secureTextEntry={!showPassword}
               editable={!loading}
               className="flex-1 px-4 py-3 pr-16 bg-surface border border-border rounded-lg text-foreground"
             />
             <Pressable
               onPress={() => setShowPassword(!showPassword)}
-              className="absolute right-4"
+              style={styles.passwordToggle}
             >
               <Text className="text-primary text-sm font-semibold">
                 {showPassword ? t("auth.signin.hide") : t("auth.signin.show")}
@@ -305,13 +333,28 @@ export default function SignInScreen() {
           </View>
         </View>
 
+        {/* Additional authentication: Biometric login option */}
+        {biometricAvailable && (
+          <Pressable
+            onPress={() => setUseBiometric(!useBiometric)}
+            style={styles.biometricRow}
+          >
+            <View className={`w-5 h-5 mr-2 border rounded ${useBiometric ? "bg-primary border-primary" : "border-border"}`}>
+              {useBiometric && <Text className="text-white text-xs text-center">✓</Text>}
+            </View>
+            <Text className="text-foreground text-sm">
+              {L("Use biometrics for this login", "Usar biometría para este inicio de sesión")}
+            </Text>
+          </Pressable>
+        )}
+
         <Pressable
           onPress={() => {
             setShowForgotPassword(true);
             setError(null);
             setForgotEmail(email);
           }}
-          className="mb-8"
+          style={styles.forgotButton}
         >
           <Text className="text-right text-primary font-semibold text-sm">
             {t("auth.signin.forgot")}
@@ -320,29 +363,58 @@ export default function SignInScreen() {
 
         <Pressable
           onPress={handleSignIn}
-          disabled={loading || cooldownLeft > 0}
-          className={`py-4 rounded-lg flex-row items-center justify-center ${
-            loading || cooldownLeft > 0 ? "bg-primary/50" : "bg-primary"
-          }`}
+          disabled={loading}
+          style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
         >
           {loading ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
             <Text className="text-white font-bold text-lg">
-              {cooldownLeft > 0 ? `Try again in ${cooldownLeft}s` : t("auth.signin.cta")}
+              {t("auth.signin.cta")}
             </Text>
           )}
         </Pressable>
 
         <View className="mt-6 flex-row justify-center gap-2">
           <Text className="text-muted">{t("auth.signin.no_account")}</Text>
-          <Pressable onPress={() => router.push("/auth/signup")}>
+          <Pressable onPress={() => safePush("/auth/signup")}>
             <Text className="text-primary font-semibold">
               {t("auth.signin.sign_up")}
             </Text>
           </Pressable>
         </View>
       </ScrollView>
-    </ScreenContainer>
+      </ScreenContainer>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  biometricRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    marginBottom: 16,
+  },
+  forgotButton: {
+    marginBottom: 32,
+  },
+  passwordToggle: {
+    position: "absolute",
+    right: 16,
+  },
+  primaryButton: {
+    alignItems: "center",
+    backgroundColor: "#F97316",
+    borderRadius: 8,
+    flexDirection: "row",
+    justifyContent: "center",
+    minHeight: 56,
+    paddingVertical: 16,
+  },
+  primaryButtonDisabled: {
+    opacity: 0.55,
+  },
+  secondaryLinkButton: {
+    marginTop: 24,
+  },
+});

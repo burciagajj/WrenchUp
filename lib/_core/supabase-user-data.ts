@@ -5,6 +5,7 @@
  */
 
 import type { Vehicle } from "../types";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 import {
   ensureValidAccessToken,
   isJwtExpiredError,
@@ -16,16 +17,34 @@ export type UserProfile = {
   userId: string;
   email: string | null;
   full_name: string | null;
+  display_name: string | null;
+  expo_push_token: string | null;
+  chat_notifications_enabled: boolean | null;
+  marketing_notifications_enabled: boolean | null;
   date_of_birth: string | null;
   bio: string | null;
   avatar_url: string | null;
+  avatar_status: "pending_review" | "approved" | "rejected" | null;
+  avatar_submitted_at: string | null;
+  avatar_reviewed_at: string | null;
+  avatar_reviewed_by: string | null;
+  avatar_rejection_reason: string | null;
   verification_status: "pending_review" | "approved" | "rejected" | null;
   id_document_url: string | null;
+  insurance_document_url: string | null;
   certification_document_url: string | null;
+  business_license_document_url: string | null;
+  license_expires_at: string | null;
+  insurance_expires_at: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  rejection_reason: string | null;
   mechanic_attested_no_criminal_record: boolean | null;
   mechanic_attested_at: string | null;
-  role: "customer" | "mechanic" | null;
+  role: "customer" | "mechanic" | "admin" | null;
   completed_at: string | null;
+  phone_number: string | null;
+  phone_verified_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -37,17 +56,35 @@ function mapDbRowToProfile(row: Record<string, unknown>): UserProfile {
     userId: String(row.user_id ?? row.userId ?? ""),
     email: (row.email as string) ?? null,
     full_name: (row.full_name as string) ?? (row.name as string) ?? null,
+    display_name: (row.display_name as string) ?? null,
+    expo_push_token: (row.expo_push_token as string) ?? null,
+    chat_notifications_enabled: (row.chat_notifications_enabled as boolean) ?? true,
+    marketing_notifications_enabled: (row.marketing_notifications_enabled as boolean) ?? true,
     date_of_birth: (row.date_of_birth as string) ?? null,
     bio: (row.bio as string) ?? null,
     avatar_url: (row.avatar_url as string) ?? (row.photo_url as string) ?? null,
+    avatar_status: (row.avatar_status as UserProfile["avatar_status"]) ?? "pending_review",
+    avatar_submitted_at: (row.avatar_submitted_at as string) ?? null,
+    avatar_reviewed_at: (row.avatar_reviewed_at as string) ?? null,
+    avatar_reviewed_by: (row.avatar_reviewed_by as string) ?? null,
+    avatar_rejection_reason: (row.avatar_rejection_reason as string) ?? null,
     verification_status: (row.verification_status as UserProfile["verification_status"]) ?? null,
     id_document_url: (row.id_document_url as string) ?? null,
+    insurance_document_url: (row.insurance_document_url as string) ?? null,
     certification_document_url: (row.certification_document_url as string) ?? null,
+    business_license_document_url: (row.business_license_document_url as string) ?? null,
+    license_expires_at: (row.license_expires_at as string) ?? null,
+    insurance_expires_at: (row.insurance_expires_at as string) ?? null,
+    reviewed_at: (row.reviewed_at as string) ?? null,
+    reviewed_by: (row.reviewed_by as string) ?? null,
+    rejection_reason: (row.rejection_reason as string) ?? null,
     mechanic_attested_no_criminal_record:
       (row.mechanic_attested_no_criminal_record as boolean) ?? null,
     mechanic_attested_at: (row.mechanic_attested_at as string) ?? null,
     role: (row.role as UserProfile["role"]) ?? null,
     completed_at: (row.completed_at as string) ?? null,
+    phone_number: (row.phone_number as string) ?? null,
+    phone_verified_at: (row.phone_verified_at as string) ?? null,
     created_at: String(row.created_at ?? ""),
     updated_at: String(row.updated_at ?? ""),
   };
@@ -62,17 +99,35 @@ function mapAppUpdatesToDb(
     // Live Supabase schema uses full_name + avatar_url (not name / photo_url)
     if (
       key === "full_name" ||
+      key === "display_name" ||
+      key === "expo_push_token" ||
+      key === "chat_notifications_enabled" ||
+      key === "marketing_notifications_enabled" ||
       key === "date_of_birth" ||
       key === "avatar_url" ||
+      key === "avatar_status" ||
+      key === "avatar_submitted_at" ||
+      key === "avatar_reviewed_at" ||
+      key === "avatar_reviewed_by" ||
+      key === "avatar_rejection_reason" ||
       key === "bio" ||
       key === "role" ||
       key === "email" ||
       key === "completed_at" ||
       key === "verification_status" ||
       key === "id_document_url" ||
+      key === "insurance_document_url" ||
       key === "certification_document_url" ||
+      key === "business_license_document_url" ||
+      key === "license_expires_at" ||
+      key === "insurance_expires_at" ||
+      key === "reviewed_at" ||
+      key === "reviewed_by" ||
+      key === "rejection_reason" ||
       key === "mechanic_attested_no_criminal_record" ||
-      key === "mechanic_attested_at"
+      key === "mechanic_attested_at" ||
+      key === "phone_number" ||
+      key === "phone_verified_at"
     ) {
       db[key] = v;
     }
@@ -162,7 +217,15 @@ class SupabaseUserDataClient {
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const text = await response.text();
+        let error: any = {};
+        if (text) {
+          try {
+            error = JSON.parse(text);
+          } catch {
+            error = { message: text };
+          }
+        }
         const expectedOptionalMissing = this.isOptionalVehicleColumnMissing({
           code: error?.code,
           message: error?.message,
@@ -203,21 +266,53 @@ class SupabaseUserDataClient {
 
       // GET requests return array or single object
       if (method === "GET") {
-        return await response.json();
+        const text = await response.text();
+        if (!text) return null;
+        try {
+          return JSON.parse(text);
+        } catch {
+          throw {
+            code: "invalid_json",
+            message: "Supabase returned an invalid JSON payload.",
+            details: text,
+          };
+        }
       }
 
       // POST/PATCH/DELETE return empty or modified rows
       const text = await response.text();
-      return text ? JSON.parse(text) : null;
+      if (!text) return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw {
+          code: "invalid_json",
+          message: "Supabase returned an invalid JSON payload.",
+          details: text,
+        };
+      }
     } catch (error: any) {
       const errorCode = error?.code || 'unknown';
       const errorMsg = error?.message || 'Unknown error';
+      const shouldTrackSupabaseError = !this.isOptionalVehicleColumnMissing(error);
       
       // Avoid noisy RedBox for known optional-column fallback path.
       if (this.isOptionalVehicleColumnMissing(error)) {
         console.warn(`[SupabaseUserData] API call fallback: ${errorMsg}`);
       } else {
         console.error(`[SupabaseUserData] API call failed (${errorCode}):`, errorMsg);
+      }
+
+      if (shouldTrackSupabaseError) {
+        void trackAnalyticsEvent({
+          eventName: "supabase_error",
+          properties: {
+            endpoint,
+            method,
+            code: errorCode,
+            message: errorMsg,
+          },
+        });
       }
       
       // Re-throw with enhanced context
@@ -261,8 +356,11 @@ class SupabaseUserDataClient {
             user_id: userId,
             role,
             full_name: null,
+            display_name: null,
             bio: null,
             avatar_url: null,
+            chat_notifications_enabled: true,
+            marketing_notifications_enabled: true,
           },
           currentToken
         );
@@ -681,7 +779,17 @@ class SupabaseUserDataClient {
   ): Promise<UserProfile> {
     try {
       const currentToken = await ensureValidAccessToken(sessionToken);
-      const dbPatch = mapAppUpdatesToDb({ avatar_url });
+      // Every new photo (signup or a later retake) re-enters admin review —
+      // clear any prior decision so a stale "approved"/"rejected" status
+      // never carries over to unreviewed content. See migration 034.
+      const dbPatch = mapAppUpdatesToDb({
+        avatar_url,
+        avatar_status: "pending_review",
+        avatar_submitted_at: new Date().toISOString(),
+        avatar_reviewed_at: null,
+        avatar_reviewed_by: null,
+        avatar_rejection_reason: null,
+      });
       let result: any;
       try {
         result = await this.apiCall(

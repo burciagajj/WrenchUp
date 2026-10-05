@@ -1,4 +1,6 @@
 import type { RegionCode } from "./types";
+import type { MockPaymentsRuntime } from "./mock-payments";
+import { shouldUseMockPayments } from "./mock-payments";
 
 /**
  * Client-safe Stripe helpers and types for the WrenchUp app.
@@ -53,9 +55,53 @@ export type StripeCustomer = {
   defaultPaymentMethod?: string;
 };
 
-/** Public publishable key, exposed to the client through EXPO_PUBLIC_*. */
-export function getPublishableKey(): string {
-  return process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
+/**
+ * Public publishable key, exposed to the client through EXPO_PUBLIC_*.
+ *
+ * Dev builds (including Expo Go) only ever resolve to a pk_test_ key,
+ * regardless of what's configured — a live key can never accidentally be
+ * exercised while developing, even if one leaks into a dev .env. Real
+ * production builds (isDev === false) may resolve to either a live key
+ * (EXPO_PUBLIC_STRIPE_LIVE_PUBLISHABLE_KEY) or a test key (useful for a
+ * staging/TestFlight build still pointed at Stripe test mode). Takes an
+ * optional runtime object (same shape as shouldUseMockPayments /
+ * shouldShowTestCardButton) so callers — and tests — can pin the environment
+ * explicitly instead of relying on the ambient __DEV__ global, which isn't
+ * defined at all outside a real RN/Expo runtime (e.g. under vitest).
+ */
+export function getPublishableKey(runtime: MockPaymentsRuntime = {}): string {
+  const globalIsDev = typeof __DEV__ !== "undefined" ? __DEV__ : false;
+  const isDev = runtime.isDev ?? globalIsDev;
+
+  const testKey = process.env.EXPO_PUBLIC_STRIPE_TEST_PUBLISHABLE_KEY?.trim() ?? "";
+  const liveKey = process.env.EXPO_PUBLIC_STRIPE_LIVE_PUBLISHABLE_KEY?.trim() ?? "";
+  const legacyKey = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY?.trim() ?? "";
+
+  if (isDev) {
+    if (testKey.startsWith("pk_test_")) return testKey;
+    if (legacyKey.startsWith("pk_test_")) return legacyKey;
+    return "";
+  }
+
+  if (liveKey.startsWith("pk_live_")) return liveKey;
+  if (testKey.startsWith("pk_test_")) return testKey;
+  if (legacyKey.startsWith("pk_live_") || legacyKey.startsWith("pk_test_")) return legacyKey;
+  return "";
+}
+
+/**
+ * Returns true when the app should expose the test-card helper button.
+ *
+ * Gated on build environment, not just the key prefix. getPublishableKey()
+ * can now resolve to a live key in a real production build, but this stays
+ * hard-gated on isDev regardless of what key is configured, so a misconfigured
+ * production build can never expose the "Use Test Card" shortcut to real
+ * customers even if a test key or live key slips into the wrong build.
+ */
+export function shouldShowTestCardButton(runtime: MockPaymentsRuntime = {}): boolean {
+  const globalIsDev = typeof __DEV__ !== "undefined" ? __DEV__ : false;
+  const isDev = runtime.isDev ?? globalIsDev;
+  return (isDev && Boolean(getPublishableKey(runtime))) || shouldUseMockPayments(runtime);
 }
 
 /** Resolve the right Stripe currency for a region. */

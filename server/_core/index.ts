@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { registerProfilePhotoRoutes } from "./profilePhoto";
 import { registerSymptomDiagnoseRoutes } from "./symptomDiagnose";
+import { registerMechanicCancelRoutes } from "./mechanicCancel";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 
@@ -60,6 +61,7 @@ async function startServer() {
   registerStorageProxy(app);
   registerProfilePhotoRoutes(app);
   registerSymptomDiagnoseRoutes(app);
+  registerMechanicCancelRoutes(app);
   registerOAuthRoutes(app);
 
   app.get("/api/health", (_req, res) => {

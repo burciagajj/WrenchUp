@@ -3,6 +3,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Eas
 import { useEffect } from "react";
 import Svg, { Path, Circle, Defs, LinearGradient, Stop } from "react-native-svg";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { useL } from "@/hooks/use-locale";
 
 interface MapCardProps {
   etaMinutes?: number;
@@ -16,6 +17,7 @@ interface MapCardProps {
  */
 export function MapCard({ etaMinutes, status, height = 220 }: MapCardProps) {
   const progress = useSharedValue(0);
+  const L = useL();
 
   useEffect(() => {
     progress.value = 0;
@@ -103,27 +105,30 @@ export function MapCard({ etaMinutes, status, height = 220 }: MapCardProps) {
       <View style={styles.statusChipWrap} pointerEvents="none">
         <View style={styles.statusChip}>
           <View style={styles.statusDot} />
-          <Text style={styles.statusText}>{statusLabel(status, etaMinutes)}</Text>
+          <Text style={styles.statusText}>{statusLabel(status, etaMinutes, L)}</Text>
         </View>
       </View>
     </View>
   );
 }
 
-function statusLabel(status: MapCardProps["status"], eta?: number): string {
+function statusLabel(status: MapCardProps["status"], eta: number | undefined, L: (en: string, es: string) => string): string {
   switch (status) {
     case "searching":
-      return "Finding nearby mechanic…";
+      return L("Finding nearby mechanic…", "Buscando mecánico cercano…");
     case "enroute":
-      return `Mechanic ${typeof eta === "number" ? `${eta} min away` : "en route"}`;
+      return L(
+        `Mechanic ${typeof eta === "number" ? `${eta} min away` : "en route"}`,
+        `Mecánico ${typeof eta === "number" ? `a ${eta} min` : "en camino"}`,
+      );
     case "arrived":
-      return "Mechanic has arrived";
+      return L("Mechanic has arrived", "El mecánico llegó");
     case "in_progress":
-      return "Service in progress";
+      return L("Service in progress", "Servicio en curso");
     case "completed":
-      return "Service complete";
+      return L("Service complete", "Servicio completado");
     default:
-      return "Ready when you are";
+      return L("Ready when you are", "Listo cuando tú lo estés");
   }
 }
 

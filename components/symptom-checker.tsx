@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Image,
   LayoutAnimation,
   Platform,
   Pressable,
@@ -15,6 +16,8 @@ import { diagnoseSymptoms, type SymptomDiagnosisResult } from "@/lib/symptom-dia
 import { haptic } from "@/lib/haptics";
 import type { ServiceCode } from "@/lib/types";
 import { useT } from "@/hooks/use-locale";
+import { useImagePicker, type PickedImage } from "@/hooks/use-image-picker";
+import { getSessionToken } from "@/lib/auth-context";
 
 if (
   Platform.OS === "android" &&
@@ -43,8 +46,10 @@ export function SymptomChecker({
   onExpand,
 }: SymptomCheckerProps) {
   const t = useT();
+  const { pickIssuePhoto } = useImagePicker();
   const [expanded, setExpanded] = useState(false);
   const [symptoms, setSymptoms] = useState("");
+  const [photo, setPhoto] = useState<PickedImage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SymptomDiagnosisResult | null>(null);
@@ -63,7 +68,7 @@ export function SymptomChecker({
 
   const handleDiagnose = async () => {
     const trimmed = symptoms.trim();
-    if (trimmed.length < 8) {
+    if (trimmed.length < 8 && !photo) {
       setError(t("home.symptom.error_short"));
       haptic.warning();
       return;
@@ -75,7 +80,13 @@ export function SymptomChecker({
     haptic.medium();
 
     try {
-      const diagnosis = await diagnoseSymptoms(trimmed, vehicleLabel);
+      const sessionToken = (await getSessionToken()) ?? undefined;
+      const diagnosis = await diagnoseSymptoms(
+        trimmed,
+        vehicleLabel,
+        sessionToken,
+        photo ? { base64: photo.base64, mimeType: photo.mimeType } : undefined
+      );
       animateLayout();
       setResult(diagnosis);
       haptic.success();
@@ -88,6 +99,20 @@ export function SymptomChecker({
     }
   };
 
+  const handlePickPhoto = async () => {
+    haptic.light();
+    const picked = await pickIssuePhoto();
+    if (picked) {
+      setPhoto(picked);
+      setError(null);
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    haptic.light();
+    setPhoto(null);
+  };
+
   const handleBookNow = () => {
     if (!result) return;
     haptic.medium();
@@ -98,6 +123,7 @@ export function SymptomChecker({
     animateLayout();
     setResult(null);
     setError(null);
+    setPhoto(null);
   };
 
   return (
@@ -139,6 +165,20 @@ export function SymptomChecker({
                 textAlignVertical="top"
                 editable={!loading}
               />
+              {photo ? (
+                <View style={styles.photoPreviewRow}>
+                  <Image source={{ uri: photo.uri }} style={styles.photoThumb} />
+                  <Pressable onPress={handleRemovePhoto} style={styles.photoRemove} disabled={loading}>
+                    <IconSymbol name="xmark" size={14} color="#F87171" />
+                    <Text style={styles.photoRemoveText}>{t("home.symptom.remove_photo")}</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable onPress={handlePickPhoto} style={styles.addPhoto} disabled={loading}>
+                  <IconSymbol name="camera.fill" size={16} color="#94A3B8" />
+                  <Text style={styles.addPhotoText}>{t("home.symptom.add_photo")}</Text>
+                </Pressable>
+              )}
               {vehicleLabel ? (
                 <Text style={styles.vehicleHint}>
                   {t("home.symptom.vehicle")}: {vehicleLabel}
@@ -148,7 +188,7 @@ export function SymptomChecker({
               <PrimaryButton
                 title={loading ? t("home.symptom.diagnosing") : t("home.symptom.diagnose")}
                 loading={loading}
-                disabled={loading || symptoms.trim().length < 8}
+                disabled={loading || (symptoms.trim().length < 8 && !photo)}
                 onPress={handleDiagnose}
                 iconLeft={
                   !loading ? (
@@ -252,6 +292,43 @@ const styles = StyleSheet.create({
   vehicleHint: {
     color: "#64748B",
     fontSize: 12,
+  },
+  addPhoto: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#334155",
+    borderStyle: "dashed",
+  },
+  addPhotoText: {
+    color: "#94A3B8",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  photoPreviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  photoThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    backgroundColor: "#1E293B",
+  },
+  photoRemove: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  photoRemoveText: {
+    color: "#F87171",
+    fontSize: 13,
+    fontWeight: "600",
   },
   errorText: {
     color: "#F87171",

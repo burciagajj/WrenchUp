@@ -4,7 +4,7 @@
  * Now includes user data isolation: loads/clears per-user profile and vehicles
  */
 
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -34,6 +34,8 @@ export type AuthUser = {
   id: string;
   email: string;
   role: "customer" | "mechanic";
+  fullName?: string | null;
+  displayName?: string | null;
   profileCompleted: boolean;
   emailConfirmed: boolean;
 };
@@ -60,70 +62,98 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [hasSession, setHasSession] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const restoreInFlightRef = useRef<Promise<void> | null>(null);
+  const didRestoreRef = useRef(false);
 
   // Restore session on app launch
   const restoreSession = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
+    if (didRestoreRef.current) {
+      setIsLoading(false);
+      return;
+    }
+    if (restoreInFlightRef.current) {
+      return restoreInFlightRef.current;
+    }
 
-      // Get session token (may be refreshed below)
-      let sessionToken: string | null = null;
-      if (Platform.OS === "web") {
-        sessionToken = await AsyncStorage.getItem(SESSION_TOKEN_KEY);
-      } else {
-        sessionToken = await SecureStore.getItemAsync(SESSION_TOKEN_KEY);
-      }
+    restoreInFlightRef.current = (async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
 
-      console.log("[AuthContext] Restoring session...", { sessionToken: sessionToken ? "✓ Found" : "✗ Not found" });
+        // Get session token (may be refreshed below)
+        let sessionToken: string | null = null;
+        if (Platform.OS === "web") {
+          sessionToken = await AsyncStorage.getItem(SESSION_TOKEN_KEY);
+        } else {
+          sessionToken = await SecureStore.getItemAsync(SESSION_TOKEN_KEY);
+        }
 
-      // Note: We don't strictly require a session token; the user object is the source of truth
-      if (!sessionToken) {
-        console.log("[AuthContext] No session token found, checking for cached user...");
-      }
+        console.log("[AuthContext] Restoring session...", { sessionToken: sessionToken ? "✓ Found" : "✗ Not found" });
 
-      // Get cached user info
-      let cachedUser: AuthUser | null = null;
-      if (Platform.OS === "web") {
-        const cached = await AsyncStorage.getItem(AUTH_USER_KEY);
-        cachedUser = cached ? JSON.parse(cached) : null;
-      } else {
-        const cached = await SecureStore.getItemAsync(AUTH_USER_KEY);
-        cachedUser = cached ? JSON.parse(cached) : null;
-      }
+        // Note: We don't strictly require a session token; the user object is the source of truth
+        if (!sessionToken) {
+          console.log("[AuthContext] No session token found, checking for cached user...");
+        }
 
-      console.log("[AuthContext] Cached user:", cachedUser ? "yes" : "no");
+        // Get cached user info
+        let cachedUser: AuthUser | null = null;
+        if (Platform.OS === "web") {
+          const cached = await AsyncStorage.getItem(AUTH_USER_KEY);
+          cachedUser = cached ? JSON.parse(cached) : null;
+        } else {
+          const cached = await SecureStore.getItemAsync(AUTH_USER_KEY);
+          cachedUser = cached ? JSON.parse(cached) : null;
+        }
 
-      // Require both user cache and access token — avoids "logged in" UI on fresh devices with stale user only
-      if (cachedUser && sessionToken) {
-        setMemorySessionToken(sessionToken);
-        try {
-          const refreshToken = await getRefreshToken();
-          if (refreshToken) {
-            sessionToken = await ensureValidAccessToken(sessionToken);
-            console.log("[AuthContext] Session refreshed on restore");
+        console.log("[AuthContext] Cached user:", cachedUser ? "yes" : "no");
+
+        // Require both user cache and access token — avoids "logged in" UI on fresh devices with stale user only
+        if (cachedUser && sessionToken) {
+          setMemorySessionToken(sessionToken);
+          try {
+            const refreshToken = await getRefreshToken();
+            if (refreshToken) {
+              sessionToken = await ensureValidAccessToken(sessionToken);
+              await updateSessionToken(sessionToken);
+              console.log("[AuthContext] Session refreshed on restore");
+            }
+          } catch (refreshErr) {
+            console.warn("[AuthContext] Could not refresh on restore, using stored token:", refreshErr);
           }
-        } catch (refreshErr) {
-          console.warn("[AuthContext] Could not refresh on restore, using stored token:", refreshErr);
+
+          const liveUser = await supabaseAuth.getCurrentUser(sessionToken);
+          if (!liveUser?.id || liveUser.id !== cachedUser.id) {
+            console.log("[AuthContext] Cached session no longer exists in Supabase — clearing");
+            await clearAllPersistedSession();
+            setUser(null);
+            setHasSession(false);
+            return;
+          }
+
+          await updateSessionToken(sessionToken);
+          setUser(liveUser);
+          setHasSession(true);
+          console.log("[AuthContext] Session restored for user:", liveUser.email);
+        } else {
+          if (cachedUser && !sessionToken) {
+            console.log("[AuthContext] Stale user cache without token — clearing");
+            await clearAllPersistedSession();
+          }
+          setUser(null);
+          setHasSession(false);
         }
-        setUser(cachedUser);
-        setHasSession(true);
-        console.log("[AuthContext] Session restored for user:", cachedUser.email);
-      } else {
-        if (cachedUser && !sessionToken) {
-          console.log("[AuthContext] Stale user cache without token — clearing");
-          await clearAllPersistedSession();
-        }
+      } catch (err) {
+        console.error("[AuthContext] Failed to restore session:", err);
         setUser(null);
         setHasSession(false);
+      } finally {
+        didRestoreRef.current = true;
+        setIsLoading(false);
+        restoreInFlightRef.current = null;
       }
-    } catch (err) {
-      console.error("[AuthContext] Failed to restore session:", err);
-      setUser(null);
-      setHasSession(false);
-    } finally {
-      setIsLoading(false);
-    }
+    })();
+
+    return restoreInFlightRef.current;
   }, []);
 
   // Restore session on mount
@@ -174,6 +204,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearSession = useCallback(async () => {
     clearMemoryTokens();
+    didRestoreRef.current = false;
     setUser(null);
     setHasSession(false);
     try {
@@ -227,6 +258,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     setError(null);
     clearMemoryTokens();
+    didRestoreRef.current = false;
     setUser(null);
     setHasSession(false);
     try {
@@ -283,9 +315,15 @@ export function useLoadUserData() {
   const { user } = useAuth();
   const { dispatch } = useStore();
 
+  // Keep latest user for the fallback path without causing unnecessary callback churn
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   return useCallback(
     async (sessionToken: string, authUserOverride?: AuthUser) => {
-      const authUser = authUserOverride ?? user;
+      const authUser = authUserOverride ?? userRef.current;
       if (!authUser?.id) {
         console.log("[useLoadUserData] No user, skipping load");
         return;
@@ -298,39 +336,59 @@ export function useLoadUserData() {
         // Don't throw — let the screen show its own error if needed
       }
     },
-    [user, dispatch]
+    [dispatch]
   );
 }
 
 /**
  * Hook to clear user data when user logs out
  * Call this in profile.tsx logout handler
+ *
+ * Uses refs internally so callers do not need to subscribe to large store slices.
  */
 export function useClearUserData() {
   const { user } = useAuth();
   const { state, dispatch } = useStore();
 
-  return useCallback(async () => {
-    if (user?.id) {
-      await saveUserHistory(user.id, {
-        jobs: state.jobs,
-        activeJobId: state.activeJobId,
-        mechanicJobs: state.mechanicJobs,
-        mechanicActiveJobId: state.mechanicActiveJobId,
-        paymentMethods: state.paymentMethods,
-        defaultPaymentMethodId: state.defaultPaymentMethodId,
-      });
-    }
-    console.log("[useClearUserData] Clearing user data");
-    dispatch({ type: "CLEAR_USER_DATA" });
+  const userRef = useRef(user);
+  const stateRef = useRef({
+    jobs: state.jobs,
+    activeJobId: state.activeJobId,
+    mechanicJobs: state.mechanicJobs,
+    mechanicActiveJobId: state.mechanicActiveJobId,
+    paymentMethods: state.paymentMethods,
+    defaultPaymentMethodId: state.defaultPaymentMethodId,
+  });
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    stateRef.current = {
+      jobs: state.jobs,
+      activeJobId: state.activeJobId,
+      mechanicJobs: state.mechanicJobs,
+      mechanicActiveJobId: state.mechanicActiveJobId,
+      paymentMethods: state.paymentMethods,
+      defaultPaymentMethodId: state.defaultPaymentMethodId,
+    };
   }, [
-    user?.id,
     state.jobs,
     state.activeJobId,
     state.mechanicJobs,
     state.mechanicActiveJobId,
     state.paymentMethods,
     state.defaultPaymentMethodId,
-    dispatch,
   ]);
+
+  return useCallback(async () => {
+    const u = userRef.current;
+    const s = stateRef.current;
+    if (u?.id) {
+      await saveUserHistory(u.id, { ...s });
+    }
+    console.log("[useClearUserData] Clearing user data");
+    dispatch({ type: "CLEAR_USER_DATA" });
+  }, [dispatch]);
 }

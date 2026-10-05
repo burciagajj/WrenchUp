@@ -16,7 +16,7 @@ export default function JobDetailScreen() {
 
   if (!job) {
     return (
-      <ScreenContainer>
+      <ScreenContainer showBackButton title="Job details">
         <View style={styles.errorWrap}>
           <Text style={styles.errorText}>Job not found.</Text>
         </View>
@@ -41,7 +41,7 @@ export default function JobDetailScreen() {
   };
 
   return (
-    <ScreenContainer>
+    <ScreenContainer showBackButton title="Job details">
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }} showsVerticalScrollIndicator={false}>
         <View style={styles.topBar}>
           <Pressable
@@ -81,9 +81,11 @@ export default function JobDetailScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Receipt</Text>
-          <Row label="Booking fee" value={`$${job.fare.base.toFixed(2)}`} />
           <Row label="Service" value={`$${job.fare.service.toFixed(2)}`} />
-          <Row label="Dispatch" value={`$${job.fare.distance.toFixed(2)}`} />
+          <Row
+            label={`Dispatch fee (${Math.round((job.fare.bookingFee / job.fare.service) * 100)}%)`}
+            value={`$${job.fare.bookingFee.toFixed(2)}`}
+          />
           {tip > 0 ? <Row label="Tip" value={`$${tip.toFixed(2)}`} highlight /> : null}
           <View style={styles.divider} />
           <View style={styles.totalRow}>
@@ -138,45 +140,45 @@ const styles = StyleSheet.create({
   },
   backBtn: {
     width: 36, height: 36, borderRadius: 18,
-    backgroundColor: "#F5F7FA",
+    backgroundColor: "#1F2937",
     alignItems: "center", justifyContent: "center",
   },
-  topTitle: { fontSize: 16, fontWeight: "800", color: "#0F172A" },
+  topTitle: { fontSize: 16, fontWeight: "800", color: "#F8FAFC" },
   hero: { paddingHorizontal: 20, paddingTop: 12 },
-  serviceName: { fontSize: 24, fontWeight: "800", color: "#0F172A" },
-  date: { fontSize: 13, color: "#64748B", marginTop: 4 },
+  serviceName: { fontSize: 24, fontWeight: "800", color: "#F8FAFC" },
+  date: { fontSize: 13, color: "#CBD5E1", marginTop: 4 },
   mechanicCard: {
     marginHorizontal: 20,
     marginTop: 16,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#111827",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#334155",
     borderRadius: 16,
     padding: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
-  mechanicName: { fontSize: 15, fontWeight: "800", color: "#0F172A" },
+  mechanicName: { fontSize: 15, fontWeight: "800", color: "#F8FAFC" },
   card: {
     marginHorizontal: 20,
     marginTop: 12,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#111827",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#334155",
     borderRadius: 16,
     padding: 14,
   },
-  cardTitle: { fontSize: 14, fontWeight: "800", color: "#0F172A", marginBottom: 8 },
+  cardTitle: { fontSize: 14, fontWeight: "800", color: "#F8FAFC", marginBottom: 8 },
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
-  rowLabel: { fontSize: 13, color: "#475569" },
-  rowValue: { fontSize: 13, color: "#0F172A", fontWeight: "600", textTransform: "capitalize" },
-  divider: { height: 1, backgroundColor: "#E2E8F0", marginVertical: 8 },
+  rowLabel: { fontSize: 13, color: "#CBD5E1" },
+  rowValue: { fontSize: 13, color: "#F8FAFC", fontWeight: "600", textTransform: "capitalize" },
+  divider: { height: 1, backgroundColor: "#334155", marginVertical: 8 },
   totalRow: { flexDirection: "row", justifyContent: "space-between" },
-  totalLabel: { fontSize: 15, fontWeight: "800", color: "#0F172A" },
+  totalLabel: { fontSize: 15, fontWeight: "800", color: "#F8FAFC" },
   totalValue: { fontSize: 18, fontWeight: "800", color: "#F97316" },
-  commentLabel: { fontSize: 11, color: "#64748B", fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },
-  commentText: { fontSize: 13, color: "#0F172A", marginTop: 4, lineHeight: 19 },
+  commentLabel: { fontSize: 11, color: "#94A3B8", fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },
+  commentText: { fontSize: 13, color: "#F8FAFC", marginTop: 4, lineHeight: 19 },
   errorWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
-  errorText: { fontSize: 16, color: "#64748B" },
+  errorText: { fontSize: 16, color: "#CBD5E1" },
 });

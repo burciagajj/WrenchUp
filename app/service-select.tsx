@@ -1,20 +1,30 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View, Alert } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import { ScreenContainer } from "@/components/screen-container";
+import { InlineToast } from "@/components/inline-toast";
 import { SERVICE_TYPES } from "@/lib/seed";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { PrimaryButton } from "@/components/primary-button";
 import { haptic } from "@/lib/haptics";
-import { useLocaleContext } from "@/hooks/use-locale";
+import { useLocaleContext, useL } from "@/hooks/use-locale";
+import { useStore } from "@/lib/store";
+import { useAuth, getSessionToken } from "@/lib/auth-context";
+import { supabaseUserData } from "@/lib/_core/supabase-user-data";
+import { useTapGuard } from "@/hooks/use-tap-guard";
+
 import { localizedServiceDesc, localizedServiceName } from "@/lib/service-i18n";
 
 export default function ServiceSelectScreen() {
   const router = useRouter();
   const { preselect } = useLocalSearchParams<{ preselect?: string }>();
+  const { state } = useStore();
+  const { user } = useAuth();
+  const L = useL();
   const [selected, setSelected] = useState<string | null>(
     typeof preselect === "string" ? preselect : null,
   );
+  const [profileWarning, setProfileWarning] = useState<string | null>(null);
   const { t, locale, formatPrice } = useLocaleContext();
   const isSpanish = locale === "es-MX";
   const OIL_PACKAGES = [
@@ -32,12 +42,76 @@ export default function ServiceSelectScreen() {
     "diagnostic",
     "other",
   ]);
-  const QUICK_SERVICE_CODES = new Set(["battery_jump", "flat_tire", "lockout", "car_wash"]);
+  const QUICK_SERVICE_CODES = new Set([
+    "battery_jump",
+    "flat_tire",
+    "lockout",
+    "car_wash",
+    "quick_check_up",
+    "fuel_delivery",
+  ]);
   const quickServices = SERVICE_TYPES.filter((s) => QUICK_SERVICE_CODES.has(s.code));
   const bookedServices = SERVICE_TYPES.filter((s) => BOOKING_RECOMMENDED_SERVICES.has(s.code));
+  const hasActiveBookedJob = state.jobs.some(
+    (job) => job.isBooked && job.status !== "cancelled" && job.status !== "completed",
+  );
+  const iconColorFor = (code: string, active: boolean) => {
+    if (code === "oil_change") return active ? "#7C4A1D" : "#8B5E34";
+    return active ? "#F97316" : "#64748B";
+  };
 
-  const handleContinue = () => {
+  const handleContinue = useTapGuard()(async () => {
     if (!selected) return;
+    // Safety/auth gate: require photo before any booking flow (consistent with home)
+    if (!state.photoUrl) {
+      haptic.warning();
+      setProfileWarning(
+        L(
+          "Add a profile photo for safety and identification before requesting a mechanic.",
+          "Agrega una foto de perfil para seguridad e identificación antes de solicitar un mecánico."
+        )
+      );
+      return;
+    }
+    // Real-money safety gate: the server (payment-intent+api.ts) is the real
+    // enforcement boundary — this is just so a pending customer sees a clear
+    // message here instead of hitting a server error at the payment screen.
+    if (user) {
+      try {
+        const token = await getSessionToken();
+        if (token) {
+          const profile = await supabaseUserData.getOrCreateProfile(user.id, "customer", token);
+          if (profile.avatar_status !== "approved") {
+            haptic.warning();
+            setProfileWarning(
+              L(
+                "Your account is still pending approval. You'll be able to request a mechanic once it's approved.",
+                "Tu cuenta aún está pendiente de aprobación. Podrás solicitar un mecánico una vez aprobada.",
+              )
+            );
+            return;
+          }
+        }
+      } catch (err) {
+        console.error("[ServiceSelect] Approval check failed:", err);
+        haptic.warning();
+        setProfileWarning(
+          L("Could not verify your account right now. Please try again.", "No se pudo verificar tu cuenta. Inténtalo de nuevo.")
+        );
+        return;
+      }
+    }
+    if (hasActiveBookedJob && BOOKING_RECOMMENDED_SERVICES.has(selected)) {
+      haptic.warning();
+      Alert.alert(
+        L("Booked service in progress", "Servicio agendado en curso"),
+        L(
+          "You can still request quick services, but booked services are locked until your current booking is completed.",
+          "Todavía puedes solicitar servicios rápidos, pero los servicios agendados están bloqueados hasta que se complete tu reserva actual."
+        )
+      );
+      return;
+    }
     haptic.medium();
     if (BOOKING_RECOMMENDED_SERVICES.has(selected)) {
       router.replace({
@@ -56,25 +130,16 @@ export default function ServiceSelectScreen() {
         oilPackage: selected === "oil_change" ? oilPackage : undefined,
       },
     } as any);
-  };
+  });
 
   return (
-    <ScreenContainer edges={["top", "left", "right"]} style={{ backgroundColor: "#040B1B" }}>
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => {
-            haptic.light();
-            router.back();
-          }}
-          hitSlop={10}
-          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-        >
-          <IconSymbol name="xmark" size={22} color="#0F172A" />
-        </Pressable>
-        <Text style={styles.title}>{t("service_select.title")}</Text>
-        <View style={{ width: 22 }} />
-      </View>
-
+    <ScreenContainer edges={["left", "right", "bottom"]} style={{ backgroundColor: "#040B1B" }} showBackButton title="Select a service">
+      <InlineToast
+        visible={!!profileWarning}
+        title={L("Complete your profile for safety", "Completa tu perfil por seguridad")}
+        message={profileWarning ?? ""}
+        onDismiss={() => setProfileWarning(null)}
+      />
       <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 8, paddingBottom: 16, gap: 10 }}>
         <Text style={styles.sectionTitle}>{isSpanish ? "Servicios rápidos" : "Quick services"}</Text>
         {quickServices.map((s) => {
@@ -93,7 +158,7 @@ export default function ServiceSelectScreen() {
               ]}
             >
               <View style={[styles.iconBubble, active ? { backgroundColor: "#FFEDD5" } : null]}>
-                <IconSymbol name={s.icon} size={22} color={active ? "#F97316" : "#64748B"} />
+                <IconSymbol name={s.icon} size={22} color={iconColorFor(s.code, active)} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cardTitle}>{localizedServiceName(s.code, locale)}</Text>
@@ -110,12 +175,30 @@ export default function ServiceSelectScreen() {
         })}
 
         <Text style={[styles.sectionTitle, { marginTop: 8 }]}>{isSpanish ? "Servicios agendados" : "Booked services"}</Text>
+        {hasActiveBookedJob ? (
+          <Text style={styles.lockedHint}>
+            {isSpanish
+              ? "Puedes seguir solicitando servicios rápidos. Los servicios agendados están bloqueados hasta que termine tu reserva actual."
+              : "You can still request quick services. Booked services are locked until your current booking is completed."}
+          </Text>
+        ) : null}
         {bookedServices.map((s) => {
           const active = selected === s.code;
           return (
             <View key={s.code}>
               <Pressable
                 onPress={() => {
+                  if (hasActiveBookedJob) {
+                    haptic.warning();
+                    Alert.alert(
+                      L("Booked service in progress", "Servicio agendado en curso"),
+                      L(
+                        "You can still request quick services, but booked services are locked until your current booking is completed.",
+                        "Todavía puedes solicitar servicios rápidos, pero los servicios agendados están bloqueados hasta que se complete tu reserva actual."
+                      )
+                    );
+                    return;
+                  }
                   haptic.selection();
                   setSelected(s.code);
                 }}
@@ -126,7 +209,7 @@ export default function ServiceSelectScreen() {
                 ]}
               >
                 <View style={[styles.iconBubble, active ? { backgroundColor: "#FFEDD5" } : null]}>
-                  <IconSymbol name={s.icon} size={22} color={active ? "#F97316" : "#64748B"} />
+                  <IconSymbol name={s.icon} size={22} color={iconColorFor(s.code, active)} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.cardTitle}>{localizedServiceName(s.code, locale)}</Text>
@@ -225,6 +308,7 @@ const styles = StyleSheet.create({
   cardDesc: { fontSize: 12, color: "#CBD5E1", marginTop: 2, lineHeight: 16 },
   cardMeta: { fontSize: 11, color: "#94A3B8", marginTop: 4, fontWeight: "600" },
   bookedHint: { fontSize: 11, color: "#35E0D0", marginTop: 4, fontWeight: "700" },
+  lockedHint: { fontSize: 11, color: "#CBD5E1", marginTop: 2, marginBottom: 6, lineHeight: 15 },
   radio: {
     width: 24,
     height: 24,

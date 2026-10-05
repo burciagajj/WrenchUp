@@ -51,7 +51,11 @@ async function ensureProfilePhotosBucket(
     body: JSON.stringify({
       id: BUCKET_ID,
       name: BUCKET_ID,
-      public: true,
+      // Private — matches app/api/profile-photo+api.ts (the deployed Expo
+      // route this file mirrors for local dev). This bucket holds the
+      // mandatory admin-reviewed face-verification photo; see
+      // createSignedUrl below for how it's actually served.
+      public: false,
       file_size_limit: 5242880,
       allowed_mime_types: ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"],
     }),
@@ -62,6 +66,26 @@ async function ensureProfilePhotosBucket(
     throw new Error(err.message || `Failed to create bucket (${create.status})`);
   }
   console.log("[profile-photo] Created storage bucket:", BUCKET_ID);
+}
+
+const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365;
+
+async function createSignedUrl(supabaseUrl: string, serviceKey: string, path: string): Promise<string> {
+  const res = await fetch(`${supabaseUrl}/storage/v1/object/sign/${BUCKET_ID}/${encodeURI(path)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+    },
+    body: JSON.stringify({ expiresIn: SIGNED_URL_TTL_SECONDS }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.signedURL) {
+    throw new Error(data?.message || data?.error || "Could not create signed URL");
+  }
+  const signedPath = String(data.signedURL);
+  return signedPath.startsWith("http") ? signedPath : `${supabaseUrl}/storage/v1${signedPath}`;
 }
 
 export function registerProfilePhotoRoutes(app: Express): void {
@@ -127,8 +151,8 @@ export function registerProfilePhotoRoutes(app: Express): void {
         return;
       }
 
-      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${BUCKET_ID}/${path}`;
-      console.log("[profile-photo] Uploaded:", publicUrl);
+      const publicUrl = await createSignedUrl(supabaseUrl, serviceKey, path);
+      console.log("[profile-photo] Uploaded:", path);
       res.json({ publicUrl, path });
     } catch (err) {
       console.error("[profile-photo] Error:", err);

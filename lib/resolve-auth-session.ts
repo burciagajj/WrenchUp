@@ -10,6 +10,7 @@ import {
   updateSessionToken,
 } from "@/lib/session-tokens";
 import { supabaseAuth } from "@/lib/_core/supabase-auth";
+import { ensureValidAccessToken } from "@/lib/profile-session";
 
 export type ResolvedSession = {
   sessionToken: string;
@@ -21,6 +22,9 @@ export type ResolveSessionError = {
   message: string;
 };
 
+const REFRESH_RETRY_BACKOFF_MS = 30_000;
+let lastRefreshFailureAt = 0;
+
 /**
  * Obtain session token + user id for authenticated API calls.
  * Returns null with a user-facing message via onError callback.
@@ -31,8 +35,26 @@ export async function resolveAuthSession(
 ): Promise<ResolvedSession | null> {
   let sessionToken = await getSessionToken();
 
-  // Recover session via refresh token (e.g. access token not returned on signup)
+  // Keep token valid without hammering refresh endpoint.
+  if (sessionToken) {
+    try {
+      sessionToken = await ensureValidAccessToken(sessionToken);
+    } catch (err) {
+      console.warn("[resolveAuthSession] Token validation failed:", err);
+      sessionToken = null;
+    }
+  }
+
+  // Recover session via refresh token only when needed and not in backoff.
   if (!sessionToken) {
+    const now = Date.now();
+    if (now - lastRefreshFailureAt < REFRESH_RETRY_BACKOFF_MS) {
+      onError?.({
+        code: "no_session",
+        message: "Please wait a few seconds and try again.",
+      });
+      return null;
+    }
     const refreshToken = await getRefreshToken();
     if (refreshToken) {
       try {
@@ -41,31 +63,18 @@ export async function resolveAuthSession(
         sessionToken = refreshed.access_token;
         await updateSessionToken(sessionToken, refreshed.refresh_token);
         console.log("[resolveAuthSession] Session recovered via refresh token");
+        lastRefreshFailureAt = 0;
       } catch (err) {
+        lastRefreshFailureAt = Date.now();
         console.warn("[resolveAuthSession] Refresh failed:", err);
       }
-    }
-  } else {
-    // Refresh if we have a refresh token (keeps token valid)
-    try {
-      const refreshToken = await getRefreshToken();
-      if (refreshToken) {
-        const refreshed = await supabaseAuth.refreshSession(refreshToken);
-        sessionToken = refreshed.access_token;
-        await updateSessionToken(sessionToken, refreshed.refresh_token);
-      }
-    } catch {
-      // Keep existing access token
     }
   }
 
   if (!sessionToken) {
-    const needsVerify = authUser && !authUser.emailConfirmed;
     onError?.({
       code: "no_session",
-      message: needsVerify
-        ? "Please verify your email, then sign in to complete your profile."
-        : "Please sign in again to continue.",
+      message: "Please sign in again to continue.",
     });
     return null;
   }

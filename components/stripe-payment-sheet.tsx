@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
-import { View, Text, Pressable, ActivityIndicator } from "react-native";
+import { useState } from "react";
+import { View, Text, Pressable } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useColors } from "@/hooks/use-colors";
-import { useT } from "@/hooks/use-locale";
-import { PaymentMethodCard } from "./payment-method-card";
+import { useLocaleContext, useL, useT } from "@/hooks/use-locale";
 import { PrimaryButton } from "./primary-button";
 import type { PaymentMethod } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -16,7 +15,6 @@ export interface StripePaymentSheetProps {
   selectedMethodId: string | null;
   onSelectMethod: (methodId: string) => void;
   onAddNewCard: () => void;
-  onAddTestCard?: () => void;
   onConfirmPayment: (methodId: string) => Promise<void>;
   loading?: boolean;
   error?: string | null;
@@ -30,19 +28,19 @@ export function StripePaymentSheet({
   selectedMethodId,
   onSelectMethod,
   onAddNewCard,
-  onAddTestCard,
   onConfirmPayment,
   loading = false,
   error = null,
 }: StripePaymentSheetProps) {
   const colors = useColors();
   const t = useT();
+  const L = useL();
+  const { formatPrice } = useLocaleContext();
   const [processing, setProcessing] = useState(false);
   const isBusy = processing || loading;
 
-  const selectedMethod = savedMethods.find((m) => m.id === selectedMethodId);
-  const currencySymbol = currency === "mxn" ? "$" : "$";
   const currencyCode = currency === "mxn" ? "MXN" : "USD";
+  const formattedAmount = formatPrice(amount / 100);
 
   const handleConfirm = async () => {
     if (isBusy) return;
@@ -65,8 +63,7 @@ export function StripePaymentSheet({
         <Text className="text-sm text-muted mb-1">{t("confirm.fare_estimate" as any)}</Text>
         <View className="flex-row items-baseline justify-between">
           <Text className="text-3xl font-bold text-foreground">
-            {currencySymbol}
-            {(amount / 100).toFixed(2)}
+            {formattedAmount}
           </Text>
           <Text className="text-sm font-semibold text-muted">{currencyCode}</Text>
         </View>
@@ -145,36 +142,14 @@ export function StripePaymentSheet({
               opacity: pressed ? 0.7 : 1,
             },
           ]}
-        >
-          <View className="flex-row items-center justify-center gap-2">
-            <MaterialIcons name="add" size={20} color={colors.primary} />
-            <Text className="font-semibold text-primary">
-              {t("payment.add_card" as any)}
+          >
+            <View className="flex-row items-center justify-center gap-2">
+              <MaterialIcons name="add" size={20} color={colors.primary} />
+              <Text className="font-semibold text-primary">
+                {t("payment.add_card" as any)}
             </Text>
           </View>
         </Pressable>
-        {onAddTestCard ? (
-          <Pressable
-            onPress={onAddTestCard}
-            style={({ pressed }) => [
-              {
-                backgroundColor: colors.surface,
-                borderColor: "#F97316",
-                borderWidth: 1,
-                borderRadius: 8,
-                padding: 12,
-                opacity: pressed ? 0.7 : 1,
-              },
-            ]}
-          >
-            <View className="flex-row items-center justify-center gap-2">
-              <MaterialIcons name="science" size={18} color="#F97316" />
-              <Text className="font-semibold" style={{ color: "#F97316" }}>
-                Use Test Card (4242)
-              </Text>
-            </View>
-          </Pressable>
-        ) : null}
       </View>
 
       {/* Confirm Payment Button */}
@@ -182,7 +157,7 @@ export function StripePaymentSheet({
         title={
           isBusy
             ? t("common.searching" as any)
-            : `${t("common.confirm" as any)} Payment`
+            : L("Confirm Payment", "Confirmar pago")
         }
         onPress={handleConfirm}
         disabled={!selectedMethodId || isBusy}

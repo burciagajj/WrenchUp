@@ -1,14 +1,14 @@
-# WrenchUp — Design Plan
+# Yojitan — Design Plan
 
-WrenchUp is an on-demand mobile mechanic service, similar to Uber but for car repairs. Vehicle owners can request a mechanic to come to their location for repairs and routine maintenance. The app is built for mobile portrait orientation (9:16) with one-handed iOS-first usage in mind.
+Yojitan is an on-demand mobile mechanic service, similar to Uber but for car repairs. Vehicle owners can request a mechanic to come to their location for repairs and routine maintenance. The app is built for mobile portrait orientation (9:16) with one-handed iOS-first usage in mind.
 
 ## Brand & Color System
 
-WrenchUp blends the trustworthy feel of automotive service with the speed of a ride-hailing app.
+Yojitan blends the trustworthy feel of automotive service with the speed of a ride-hailing app.
 
 | Token | Light | Dark | Usage |
 |-------|-------|------|-------|
-| `primary` | `#F97316` (Wrench Orange) | `#FB923C` | Primary CTAs, request button, active states |
+| `primary` | `#F97316` (Yojitan Orange) | `#FB923C` | Primary CTAs, request button, active states |
 | `background` | `#FFFFFF` | `#0B1220` | Screen backgrounds |
 | `surface` | `#F5F7FA` | `#111827` | Cards, sheets, elevated tiles |
 | `foreground` | `#0F172A` | `#F1F5F9` | Primary text |

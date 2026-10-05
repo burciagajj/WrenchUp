@@ -1,4 +1,4 @@
--- WrenchUp — Step 2: profile-photos storage bucket + RLS
+-- Yojitan — Step 2: profile-photos storage bucket + RLS
 -- Run in Supabase Dashboard → SQL Editor → New query → Run
 -- Fixes: "Bucket not found" when uploading profile pictures
 -- Bucket id must match lib/_core/supabase-storage.ts → bucketName = 'profile-photos'

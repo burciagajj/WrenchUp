@@ -1,6 +1,7 @@
 import type { LatLng, MechanicJob, ServiceCode } from "./types";
 import { SERVICE_TYPES, DEFAULT_COORDS } from "./seed";
 import { offsetMeters } from "./geo";
+import { formatCoordinateLocation } from "./location-label";
 
 const SAMPLE_CUSTOMERS = [
   "Jamie L.",
@@ -27,15 +28,6 @@ const SAMPLE_VEHICLES = [
   "2023 Kia Telluride",
 ];
 
-const SAMPLE_LOCATIONS = [
-  "850 Howard St, San Francisco, CA",
-  "1200 Folsom St, San Francisco, CA",
-  "601 Mission St, San Francisco, CA",
-  "350 Bush St, San Francisco, CA",
-  "100 California St, San Francisco, CA",
-  "2480 Mission St, San Francisco, CA",
-];
-
 function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -59,7 +51,7 @@ export function generateMechanicJob(mechanicCoords?: LatLng | null): MechanicJob
     customerName: pick(SAMPLE_CUSTOMERS),
     vehicle: pick(SAMPLE_VEHICLES),
     service: service.code as ServiceCode,
-    location: pick(SAMPLE_LOCATIONS),
+    location: formatCoordinateLocation(pickup),
     distanceMiles: distance,
     payout,
     status: "pending",

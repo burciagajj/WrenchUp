@@ -1,7 +1,7 @@
 // Fallback for using MaterialIcons on Android and web.
 
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { SymbolWeight, SymbolViewProps } from "expo-symbols";
+import { SymbolWeight } from "expo-symbols";
 import { ComponentProps } from "react";
 import { OpaqueColorValue, type StyleProp, type TextStyle } from "react-native";
 
@@ -19,6 +19,8 @@ const MAPPING = {
   "wrench.fill": "build",
   "wrench.and.screwdriver.fill": "build",
   "paperplane.fill": "send",
+  mail: "mail",
+  "lock.fill": "lock",
   "chevron.left.forwardslash.chevron.right": "code",
   "chevron.right": "chevron-right",
   "chevron.left": "chevron-left",
@@ -41,11 +43,24 @@ const MAPPING = {
   "minus": "remove",
   "magnifyingglass": "search",
   "gearshape.fill": "settings",
-  "questionmark.circle.fill": "help",
+  "bell.fill": "notifications",
+  "bell.badge.fill": "notifications-active",
+  // "questionmark.circle.fill" intentionally removed. Never use generic "?" help icons.
+  // Replace with context-specific icons:
+  // - Information / tips → "info.circle.fill" or "lightbulb.fill"
+  // - Warnings / important → "exclamationmark.triangle.fill"
+  // - Help & FAQ → "questionmark" replaced with "chatbubble.ellipsis" or "person.2.fill"
   "arrow.right": "arrow-forward",
   "arrow.left": "arrow-back",
+  "arrow.clockwise": "refresh",
   "bolt.fill": "bolt",
+  "key.fill": "vpn-key",
+  "wheel.circle.fill": "trip-origin",
   "drop.fill": "opacity",
+  "drop.circle.fill": "bubble-chart",
+  "soap.fill": "soap",
+  "obd.scanner.fill": "qr-code-scanner",
+  checklist: "fact-check",
   "thermometer": "thermostat",
   "engine.combustion.fill": "build",
   "exclamationmark.triangle.fill": "warning",
@@ -61,6 +76,8 @@ const MAPPING = {
   "fuelpump.fill": "local-gas-station",
   sparkles: "auto-awesome",
   "line.3.horizontal": "menu",
+  "chart.bar.fill": "bar-chart",
+  "camera.fill": "photo-camera",
 } as IconMapping;
 
 /**
@@ -78,6 +95,6 @@ export function IconSymbol({
   style?: StyleProp<TextStyle>;
   weight?: SymbolWeight;
 }) {
-  const mapped = MAPPING[name as string] ?? ("help" as ComponentProps<typeof MaterialIcons>["name"]);
+  const mapped = MAPPING[name as string] ?? ("info" as ComponentProps<typeof MaterialIcons>["name"]); // Better fallback than generic "?" help icon
   return <MaterialIcons color={color} size={size} name={mapped} style={style} />;
 }

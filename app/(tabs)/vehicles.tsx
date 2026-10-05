@@ -1,21 +1,33 @@
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
-import { useRouter } from "expo-router";
+import React, { useCallback } from "react";
 import { ScreenContainer } from "@/components/screen-container";
 import { ScreenMenuHeader } from "@/components/screen-menu-header";
-import { useLocaleContext, useT } from "@/hooks/use-locale";
+import { useL, useT } from "@/hooks/use-locale";
 import { useStore } from "@/lib/store";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { PrimaryButton } from "@/components/primary-button";
 import { haptic } from "@/lib/haptics";
+import { safePush } from "@/lib/safe-router";
 import type { Vehicle } from "@/lib/types";
 
 export default function VehiclesScreen() {
-  const router = useRouter();
   const { state, dispatch } = useStore();
   const t = useT();
-  const { locale } = useLocaleContext();
-  const isEs = locale === "es-MX";
-  const L = (en: string, es: string) => (isEs ? es : en);
+  const L = useL();
+  const renderVehicle = useCallback(({ item }: { item: Vehicle }) => (
+    <VehicleRow
+      vehicle={item}
+      selected={item.id === state.selectedVehicleId}
+      onSelect={() => {
+        haptic.selection();
+        dispatch({ type: "SELECT_VEHICLE", payload: item.id });
+      }}
+      onEdit={() => {
+        haptic.light();
+        safePush({ pathname: "/vehicle-form", params: { id: item.id } });
+      }}
+    />
+  ), [state.selectedVehicleId, dispatch]);
 
   return (
     <ScreenContainer edges={["left", "right", "bottom"]}>
@@ -27,7 +39,7 @@ export default function VehiclesScreen() {
         <Pressable
           onPress={() => {
             haptic.light();
-            router.push("/vehicle-form" as any);
+            safePush("/vehicle-form");
           }}
           style={({ pressed }) => [styles.addButton, pressed && { opacity: 0.8 }]}
         >
@@ -38,7 +50,7 @@ export default function VehiclesScreen() {
       {state.vehicles.length === 0 ? (
         <View style={styles.empty}>
           <View style={styles.emptyIcon}>
-            <IconSymbol name="car.fill" size={36} color="#F97316" />
+            <IconSymbol name="car.fill" size={36} color="#FB923C" />
           </View>
           <Text style={styles.emptyTitle}>{L("No vehicles yet", "Aún no hay vehículos")}</Text>
           <Text style={styles.emptyText}>
@@ -47,7 +59,7 @@ export default function VehiclesScreen() {
           <PrimaryButton
             title={L("Add Vehicle", "Agregar vehículo")}
             fullWidth={false}
-            onPress={() => router.push("/vehicle-form" as any)}
+            onPress={() => safePush("/vehicle-form")}
           />
         </View>
       ) : (
@@ -55,41 +67,25 @@ export default function VehiclesScreen() {
           data={state.vehicles}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32, gap: 12 }}
-          renderItem={({ item }) => (
-            <VehicleRow
-              vehicle={item}
-              isEs={isEs}
-              selected={item.id === state.selectedVehicleId}
-              onSelect={() => {
-                haptic.selection();
-                dispatch({ type: "SELECT_VEHICLE", payload: item.id });
-              }}
-              onEdit={() => {
-                haptic.light();
-                router.push({ pathname: "/vehicle-form" as any, params: { id: item.id } } as any);
-              }}
-            />
-          )}
+          renderItem={renderVehicle}
         />
       )}
     </ScreenContainer>
   );
 }
 
-function VehicleRow({
+const VehicleRow = React.memo(function VehicleRow({
   vehicle,
-  isEs,
   selected,
   onSelect,
   onEdit,
 }: {
   vehicle: Vehicle;
-  isEs: boolean;
   selected: boolean;
   onSelect: () => void;
   onEdit: () => void;
 }) {
-  const L = (en: string, es: string) => (isEs ? es : en);
+  const L = useL();
   return (
     <Pressable
       onPress={onSelect}
@@ -146,7 +142,7 @@ function VehicleRow({
       </Pressable>
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   header: {

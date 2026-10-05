@@ -11,6 +11,7 @@ import {
   getDeviceRegionHint,
   isLocationDetectionInFlight,
 } from "@/lib/region-detection";
+import { resolveServiceLocationLabel } from "@/lib/location-label";
 
 type Options = {
   /** Request location permission and reverse-geocode (auth screens). */
@@ -74,12 +75,17 @@ export function useRegionBootstrap(options: Options = {}) {
         }
 
         if (result.status === "granted" && result.coords) {
+          const address = resolveServiceLocationLabel(
+            state.defaultLocation,
+            result.coords,
+            result.address
+          );
           dispatch({
             type: "SET_USER_COORDS",
             payload: {
               coords: result.coords,
               status: "granted",
-              address: result.address,
+              address,
             },
           });
         } else {

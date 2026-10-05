@@ -1,4 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
+import { createMockPaymentIntent } from "@/lib/mock-payment";
+import { shouldUseMockPaymentsRuntime } from "@/lib/mock-payments-runtime";
 import type { PresentArgs, PresentResult } from "./use-payment-sheet.types";
 
 /**
@@ -6,14 +8,17 @@ import type { PresentArgs, PresentResult } from "./use-payment-sheet.types";
  * Callers fall back to saved-card UI on confirm.tsx.
  */
 export function usePaymentSheet() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const isMockPaymentsEnabled = shouldUseMockPaymentsRuntime();
 
-  const present = useCallback(async (_args: PresentArgs): Promise<PresentResult> => {
-    return { status: "unsupported" };
-  }, []);
+  const present = useCallback(async (args: PresentArgs): Promise<PresentResult> => {
+    if (isMockPaymentsEnabled) {
+      const mockIntent = createMockPaymentIntent(args.amount, args.currency);
+      return { status: "completed", paymentIntentId: mockIntent.id };
+    }
+    return { status: "failed", message: "Stripe PaymentSheet is unavailable on web." };
+  }, [isMockPaymentsEnabled]);
 
-  return { present, loading, error };
+  return { present, loading: false, error: null };
 }
 
 export type { PresentArgs, PresentResult } from "./use-payment-sheet.types";

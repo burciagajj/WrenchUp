@@ -4,6 +4,7 @@ import MapView, { Marker, Polyline, type Region } from "react-native-maps";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { regionFor } from "@/lib/geo";
 import type { LiveMapProps } from "./live-map-types";
+import { useL } from "@/hooks/use-locale";
 
 /**
  * Real-map version using react-native-maps. Shows the pickup pin, mechanic puck,
@@ -19,6 +20,7 @@ export function LiveMap({
   height = 220,
 }: LiveMapProps) {
   const mapRef = useRef<MapView>(null);
+  const L = useL();
 
   const points = useMemo(() => {
     const pts = [];
@@ -56,21 +58,21 @@ export function LiveMap({
           pitchEnabled={false}
         >
           {nearby?.map((n) => (
-            <Marker key={n.id} coordinate={n.coord} title={n.name ?? "Mechanic"}>
+            <Marker key={n.id} coordinate={n.coord} title={n.name ?? L("Mechanic", "Mecánico")}>
               <View style={styles.nearbyMarker}>
                 <IconSymbol name="wrench.fill" size={12} color="#FFFFFF" />
               </View>
             </Marker>
           ))}
           {pickup ? (
-            <Marker coordinate={pickup} title="Pickup">
+            <Marker coordinate={pickup} title={L("Pickup", "Recogida")}>
               <View style={styles.pickupMarker}>
                 <View style={styles.pickupInner} />
               </View>
             </Marker>
           ) : null}
           {mechanic ? (
-            <Marker coordinate={mechanic} title="Mechanic" anchor={{ x: 0.5, y: 0.5 }}>
+            <Marker coordinate={mechanic} title={L("Mechanic", "Mecánico")} anchor={{ x: 0.5, y: 0.5 }}>
               <View style={styles.mechanicMarker}>
                 <IconSymbol name="wrench.fill" size={16} color="#FFFFFF" />
               </View>
@@ -87,7 +89,7 @@ export function LiveMap({
         </MapView>
       ) : (
         <View style={styles.empty}>
-          <Text style={styles.emptyText}>Map unavailable</Text>
+          <Text style={styles.emptyText}>{L("Map unavailable", "Mapa no disponible")}</Text>
         </View>
       )}
 
@@ -98,33 +100,39 @@ export function LiveMap({
               styles.statusDot,
               {
                 backgroundColor:
-                  status === "idle" ? "#94A3B8" : status === "searching" ? "#F59E0B" : "#10B981",
+                  status === "idle" ? "#94A3B8" : status === "searching" ? "#F59E0B" : "#F97316", // Orange tint for active map states
               },
             ]}
           />
-          <Text style={styles.statusText}>{statusLabel(status, etaMinutes)}</Text>
+          <Text style={styles.statusText}>{statusLabel(status, etaMinutes, L)}</Text>
         </View>
       </View>
     </View>
   );
 }
 
-function statusLabel(status: LiveMapProps["status"], eta?: number): string {
+function statusLabel(
+  status: LiveMapProps["status"],
+  eta: number | undefined,
+  L: (en: string, es: string) => string,
+): string {
   switch (status) {
     case "searching":
-      return "Finding nearby mechanic…";
+      return L("Searching for a nearby mechanic…", "Buscando mecánico cercano…");
     case "accepted":
     case "enroute":
     case "heading_there":
-      return `Mechanic ${typeof eta === "number" ? `${eta} min away` : "en route"}`;
+      return typeof eta === "number"
+        ? L(`Mechanic in ${eta} min`, `Mecánico a ${eta} min`)
+        : L("Mechanic on the way", "Mecánico en camino");
     case "arrived":
-      return "Mechanic has arrived";
+      return L("The mechanic has arrived", "El mecánico llegó");
     case "in_progress":
-      return "Service in progress";
+      return L("Service in progress", "Servicio en curso");
     case "completed":
-      return "Service complete";
+      return L("Service completed", "Servicio completado");
     default:
-      return "Ready when you are";
+      return L("Ready whenever you are", "Listo cuando tú lo estés");
   }
 }
 
@@ -141,7 +149,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  emptyText: { color: "#FFFFFF", opacity: 0.6 },
+  emptyText: { color: "#F8FAFC", fontWeight: "800" },
   pickupMarker: {
     width: 22,
     height: 22,
@@ -190,7 +198,9 @@ const styles = StyleSheet.create({
   statusChip: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(15, 23, 42, 0.85)",
+    backgroundColor: "rgba(2, 6, 23, 0.94)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
@@ -201,5 +211,5 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
-  statusText: { color: "#F1F5F9", fontSize: 12, fontWeight: "600" },
+  statusText: { color: "#F8FAFC", fontSize: 12, fontWeight: "800" },
 });

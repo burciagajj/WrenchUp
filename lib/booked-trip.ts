@@ -1,5 +1,5 @@
-const BOOKED_MARKER_PREFIX = "[[WRENCHUP_BOOKED:";
-const BOOKED_MARKER_REGEX = /\[\[WRENCHUP_BOOKED:([^\]]+)\]\]/i;
+const BOOKED_MARKER_PREFIX = "[[YOJITAN_BOOKED:";
+const BOOKED_MARKER_REGEX = /\[\[YOJITAN_BOOKED:([^\]]+)\]\]/i;
 
 export function buildBookedCustomerNote(rawNote: string | null | undefined, scheduledIso: string): string {
   const marker = `${BOOKED_MARKER_PREFIX}${scheduledIso}]]`;

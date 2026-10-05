@@ -1,30 +1,30 @@
 import { Pressable, View, Text, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { useAppDrawer } from "@/lib/app-drawer-context";
 import { haptic } from "@/lib/haptics";
 
 type ScreenMenuHeaderProps = {
   title: string;
 };
 
-/** Top bar with hamburger + title for stack screens (activity, vehicles, profile) */
+/** Top bar with back button + title for stack screens (activity, vehicles, profile) */
 export function ScreenMenuHeader({ title }: ScreenMenuHeaderProps) {
   const insets = useSafeAreaInsets();
-  const { openDrawer } = useAppDrawer();
+  const router = useRouter();
 
   return (
     <View style={[styles.bar, { paddingTop: insets.top + 8 }]}>
       <Pressable
         onPress={() => {
           haptic.light();
-          openDrawer();
+          router.back();
         }}
         style={({ pressed }) => [styles.menuBtn, pressed && styles.menuBtnPressed]}
         accessibilityRole="button"
-        accessibilityLabel="Open menu"
+        accessibilityLabel="Go back"
       >
-        <IconSymbol name="line.3.horizontal" size={22} color="#0F172A" />
+        <IconSymbol name="chevron.left" size={22} color="#FFFFFF" />
       </Pressable>
       <Text style={styles.title} numberOfLines={1}>
         {title}
@@ -40,9 +40,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     gap: 12,
-    backgroundColor: "#FFFFFF",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E2E8F0",
+    backgroundColor: "#F97316", // Orange to match unified headers
   },
   menuBtn: {
     width: 44,
@@ -50,9 +48,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#F8FAFC",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
+    backgroundColor: "rgba(255,255,255,0.2)",
   },
   menuBtnPressed: {
     opacity: 0.85,
@@ -61,6 +57,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 20,
     fontWeight: "800",
-    color: "#0F172A",
+    color: "#FFFFFF",
   },
 });

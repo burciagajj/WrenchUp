@@ -1,0 +1,53 @@
+{
+  "build_command": "pnpm build",
+  "capabilities": [
+    "REPLACE_WITH_CAPABILITY"
+  ],
+  "dev_command": "pnpm dev",
+  "env_vars": {
+    "DATABASE_URL": "REPLACE_WITH_DATABASE_URL",
+    "DRIZZLE_DATABASE_URL": "REPLACE_WITH_DRIZZLE_DATABASE_URL"
+  },
+  "experiments": [
+    "REPLACE_WITH_EXPERIMENT"
+  ],
+  "git_remote": {
+    "repo_url": "https://example.com/your-repo.git",
+    "access_key_id": "REPLACE_WITH_ACCESS_KEY_ID",
+    "secret_access_key": "REPLACE_WITH_SECRET_ACCESS_KEY",
+    "session_token": "REPLACE_WITH_SESSION_TOKEN",
+    "expiration": "1970-01-01T00:00:00.000Z"
+  },
+  "name": "Yojitan",
+  "path": "/path/to/wrenchup-2",
+  "port": 3000,
+  "secrets": {
+    "BUILT_IN_FORGE_API_KEY": "REPLACE_WITH_BUILT_IN_FORGE_API_KEY",
+    "BUILT_IN_FORGE_API_URL": "https://example.com",
+    "EXPO_APP_QR_URL": "https://example.com",
+    "EXPO_PACKAGER_PROXY_URL": "https://example.com",
+    "EXPO_PASSWORD": "REPLACE_WITH_EXPO_PASSWORD",
+    "EXPO_PUBLIC_API_BASE_URL": "http://localhost:3000",
+    "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY": "pk_test_REPLACE_WITH_STRIPE_PUBLISHABLE_KEY",
+    "EXPO_PUBLIC_SUPABASE_ANON_KEY": "REPLACE_WITH_SUPABASE_ANON_KEY",
+    "EXPO_PUBLIC_SUPABASE_URL": "https://your-project.supabase.co",
+    "EXPO_USERNAME": "REPLACE_WITH_EXPO_USERNAME",
+    "JWT_SECRET": "REPLACE_WITH_JWT_SECRET",
+    "OAUTH_SERVER_URL": "https://example.com",
+    "OWNER_NAME": "REPLACE_WITH_OWNER_NAME",
+    "OWNER_OPEN_ID": "REPLACE_WITH_OWNER_OPEN_ID",
+    "REACT_NATIVE_PACKAGER_HOSTNAME": "REPLACE_WITH_PACKAGER_HOSTNAME",
+    "STRIPE_PUBLISHABLE_KEY": "pk_test_REPLACE_WITH_STRIPE_PUBLISHABLE_KEY",
+    "STRIPE_SECRET_KEY": "sk_test_REPLACE_WITH_STRIPE_SECRET_KEY",
+    "VITE_ANALYTICS_ENDPOINT": "https://example.com",
+    "VITE_ANALYTICS_WEBSITE_ID": "REPLACE_WITH_WEBSITE_ID",
+    "VITE_APP_ID": "REPLACE_WITH_APP_ID",
+    "VITE_APP_LOGO": "https://example.com/logo.png",
+    "VITE_APP_TITLE": "Yojitan",
+    "VITE_FRONTEND_FORGE_API_KEY": "REPLACE_WITH_FORGE_API_KEY",
+    "VITE_FRONTEND_FORGE_API_URL": "https://example.com",
+    "VITE_OAUTH_PORTAL_URL": "https://example.com"
+  },
+  "template_id": "REPLACE_WITH_TEMPLATE_ID",
+  "test_command": "pnpm test"
+}

@@ -11,11 +11,13 @@ import {
 } from "./types";
 import { getDeviceRegionHint } from "./region-detection";
 import { DEFAULT_LOCATION, DEFAULT_USER_NAME, DEFAULT_VEHICLES } from "./seed";
+import { resolveServiceLocationLabel } from "./location-label";
 
 export const initialState: AppState = {
   hydrated: false,
   userDataStatus: "idle",
   userName: DEFAULT_USER_NAME,
+  phoneNumber: null,
   defaultLocation: DEFAULT_LOCATION,
   userCoords: null,
   locationStatus: "idle",
@@ -27,15 +29,17 @@ export const initialState: AppState = {
   role: "customer",
   dashboardRoleOverride: null,
   mechanicOnline: false,
+  mechanicOnlineHeartbeatAt: null,
   mechanicJobs: [],
   mechanicActiveJobId: null,
-  detectedCountry: "MX",
-  regionPreference: "MX",
+  detectedCountry: "US",
+  regionPreference: "US",
   paymentMethods: [],
   defaultPaymentMethodId: null,
   paymentStatus: "idle",
   paymentError: null,
   notificationsInbox: [],
+  recentCancellations: [],
 };
 
 export type Action =
@@ -49,18 +53,61 @@ export type Action =
   | { type: "SELECT_VEHICLE"; payload: string }
   | { type: "CREATE_JOB"; payload: Job }
   | { type: "UPDATE_JOB_STATUS"; payload: { id: string; status: JobStatus } }
-  | { type: "UPDATE_JOB_ASSIGNMENT"; payload: { id: string; mechanicName?: string; mechanicId?: string } }
-  | { type: "UPDATE_JOB_BOOKING_META"; payload: { id: string; isBooked?: boolean; scheduledFor?: number | null } }
-  | { type: "UPDATE_JOB_MECHANIC_COORDS"; payload: { id: string; coords: { latitude: number; longitude: number } | null } }
+  | {
+      type: "UPDATE_JOB_ASSIGNMENT";
+      payload: {
+        id: string;
+        mechanicName?: string | null;
+        mechanicId?: string | null;
+        mechanicOfferSentAt?: number | null;
+        offerExpiresAt?: number | null;
+        customerQuoteAcceptedAt?: number | null;
+        mechanicAcceptedAt?: number | null;
+        stripePaymentIntentId?: string | null;
+        // Set whenever the agreed price changes (e.g. a mechanic's counter-offer
+        // is accepted) so the matching screen and final total reflect the real
+        // negotiated price instead of the original quote.
+        fare?: Job["fare"];
+      };
+    }
+  | {
+      type: "UPDATE_JOB_BOOKING_META";
+      payload: { id: string; isBooked?: boolean; scheduledFor?: number | null; location?: string; customerNote?: string | null };
+    }
+  | {
+      type: "UPDATE_JOB_MECHANIC_COORDS";
+      payload: { id: string; coords: { latitude: number; longitude: number } | null; updatedAt?: number | null };
+    }
   | { type: "UPDATE_JOB_MECHANIC_DONE_AT"; payload: { id: string; at: number | null } }
+  | { type: "UPDATE_JOB_PHOTOS"; payload: { id: string; beforePhotoUrl?: string | null; afterPhotoUrl?: string | null } }
   | { type: "COMPLETE_JOB"; payload: { id: string; rating?: number; tip?: number; ratingComment?: string } }
   | { type: "CLEAR_ACTIVE_JOB" }
+  // Mechanic's rating of the customer, mirrors COMPLETE_JOB's rating write on the customer side.
+  | { type: "RATE_CUSTOMER"; payload: { id: string; customerRating: number; customerRatingComment?: string } }
   // Mechanic mode
   | { type: "SET_ROLE"; payload: Role }
   | { type: "SET_DASHBOARD_ROLE_OVERRIDE"; payload: Role | null }
   | { type: "SET_MECHANIC_ONLINE"; payload: boolean }
+  // Bumped on every successful presence heartbeat/foreground resync while
+  // online — see mechanicOnlineHeartbeatAt on AppState for why.
+  | { type: "MECHANIC_PRESENCE_HEARTBEAT" }
   | { type: "ADD_MECHANIC_JOB"; payload: MechanicJob }
-  | { type: "UPDATE_MECHANIC_JOB_STATUS"; payload: { id: string; status: MechanicJobStatus } }
+  | {
+      type: "UPDATE_MECHANIC_JOB_STATUS";
+      payload: {
+        id: string;
+        status: MechanicJobStatus;
+        mechanicOfferSentAt?: number | null;
+        offerExpiresAt?: number | null;
+        customerQuoteAcceptedAt?: number | null;
+        mechanicAcceptedAt?: number | null;
+        stripePaymentIntentId?: string | null;
+        noShowReportedAt?: number | null;
+        // Set whenever the agreed price changes so the mechanic's own job
+        // card/earnings preview reflects the real negotiated payout.
+        payout?: number;
+      };
+    }
   | { type: "SET_DETECTED_COUNTRY"; payload: AppState["detectedCountry"] }
   | { type: "SET_REGION_PREFERENCE"; payload: AppState["regionPreference"] }
   | { type: "ADD_PAYMENT_METHOD"; payload: PaymentMethod }
@@ -70,6 +117,7 @@ export type Action =
   | { type: "ADD_INBOX_NOTIFICATION"; payload: InAppNotification }
   | { type: "MARK_INBOX_READ"; payload?: { id?: string } }
   | { type: "CLEAR_INBOX" }
+  | { type: "DISMISS_CANCELLATION_NOTICE"; payload: { jobId: string } }
   | {
       type: "LOAD_USER_HISTORY";
       payload: {
@@ -89,6 +137,7 @@ export type Action =
         vehicles: Vehicle[];
         selectedVehicleId: string | null;
         photoUrl?: string | null;
+        phoneNumber?: string | null;
       };
     }
   | { type: "CLEAR_USER_DATA" }
@@ -108,6 +157,18 @@ export type Action =
     };
 
 export function reducer(state: AppState, action: Action): AppState {
+  const now = Date.now();
+  const isFreshMechanicJob = (job: MechanicJob) => {
+    if (job.status !== "pending") return true;
+    if (typeof job.scheduledFor === "number") {
+      const thirtyMinutes = 30 * 60 * 1000;
+      const sevenDays = 7 * 24 * 60 * 60 * 1000;
+      return job.scheduledFor >= now - thirtyMinutes && job.scheduledFor <= now + sevenDays;
+    }
+    const fortyFiveMinutes = 45 * 60 * 1000;
+    return (job.receivedAt ?? 0) >= now - fortyFiveMinutes;
+  };
+
   switch (action.type) {
     case "HYDRATE":
       return {
@@ -122,7 +183,7 @@ export function reducer(state: AppState, action: Action): AppState {
                     (j.remoteRequestId &&
                       job.remoteRequestId &&
                       j.remoteRequestId === job.remoteRequestId),
-                ) === idx,
+                ) === idx && isFreshMechanicJob(job),
             )
           : state.mechanicJobs,
         hydrated: true,
@@ -136,7 +197,11 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         userCoords: action.payload.coords,
         locationStatus: action.payload.status,
-        defaultLocation: action.payload.address ?? state.defaultLocation,
+        defaultLocation: resolveServiceLocationLabel(
+          state.defaultLocation,
+          action.payload.coords,
+          action.payload.address
+        ),
       };
     case "ADD_VEHICLE": {
       const vehicles = [...state.vehicles, action.payload];
@@ -164,6 +229,7 @@ export function reducer(state: AppState, action: Action): AppState {
         activeJobId: action.payload.id,
       };
     case "UPDATE_JOB_STATUS": {
+      const targetJob = state.jobs.find((j) => j.id === action.payload.id);
       const jobs = state.jobs.map((j) => {
         if (j.id !== action.payload.id) return j;
         const next: Job = { ...j, status: action.payload.status };
@@ -174,15 +240,61 @@ export function reducer(state: AppState, action: Action): AppState {
         action.payload.status === "completed" || action.payload.status === "cancelled"
           ? null
           : state.activeJobId;
-      return { ...state, jobs, activeJobId };
+
+      // Create a persistent (until dismissed) cancellation notice for the customer home banner
+      let recentCancellations = state.recentCancellations;
+      if (action.payload.status === "cancelled" && targetJob) {
+        const already = recentCancellations.some((c) => c.jobId === action.payload.id);
+        if (!already) {
+          recentCancellations = [
+            {
+              jobId: action.payload.id,
+              service: targetJob.service,
+              location: targetJob.location,
+              isBooked: targetJob.isBooked,
+              at: Date.now(),
+            },
+            ...recentCancellations,
+          ].slice(0, 5);
+        }
+      }
+
+      return { ...state, jobs, activeJobId, recentCancellations };
     }
     case "UPDATE_JOB_ASSIGNMENT": {
       const jobs = state.jobs.map((j) =>
         j.id === action.payload.id
           ? {
               ...j,
-              mechanicName: action.payload.mechanicName ?? j.mechanicName,
-              mechanicId: action.payload.mechanicId ?? j.mechanicId,
+              mechanicName:
+                action.payload.mechanicName !== undefined
+                  ? action.payload.mechanicName ?? undefined
+                  : j.mechanicName,
+              mechanicId:
+                action.payload.mechanicId !== undefined
+                  ? action.payload.mechanicId ?? "unassigned"
+                  : j.mechanicId,
+              mechanicOfferSentAt:
+                action.payload.mechanicOfferSentAt !== undefined
+                  ? action.payload.mechanicOfferSentAt
+                  : j.mechanicOfferSentAt,
+              offerExpiresAt:
+                action.payload.offerExpiresAt !== undefined
+                  ? action.payload.offerExpiresAt
+                  : j.offerExpiresAt,
+              customerQuoteAcceptedAt:
+                action.payload.customerQuoteAcceptedAt !== undefined
+                  ? action.payload.customerQuoteAcceptedAt
+                  : j.customerQuoteAcceptedAt,
+              mechanicAcceptedAt:
+                action.payload.mechanicAcceptedAt !== undefined
+                  ? action.payload.mechanicAcceptedAt
+                  : j.mechanicAcceptedAt,
+              stripePaymentIntentId:
+                action.payload.stripePaymentIntentId !== undefined
+                  ? action.payload.stripePaymentIntentId
+                  : j.stripePaymentIntentId,
+              fare: action.payload.fare !== undefined ? action.payload.fare : j.fare,
             }
           : j,
       );
@@ -198,6 +310,11 @@ export function reducer(state: AppState, action: Action): AppState {
                 action.payload.scheduledFor !== undefined
                   ? action.payload.scheduledFor
                   : j.scheduledFor,
+              location: action.payload.location ?? j.location,
+              customerNote:
+                action.payload.customerNote !== undefined
+                  ? action.payload.customerNote ?? undefined
+                  : j.customerNote,
             }
           : j,
       );
@@ -205,13 +322,32 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "UPDATE_JOB_MECHANIC_COORDS": {
       const jobs = state.jobs.map((j) =>
-        j.id === action.payload.id ? { ...j, mechanicLiveCoords: action.payload.coords } : j,
+        j.id === action.payload.id
+          ? {
+              ...j,
+              mechanicLiveCoords: action.payload.coords,
+              mechanicLocationUpdatedAt:
+                action.payload.updatedAt !== undefined ? action.payload.updatedAt : j.mechanicLocationUpdatedAt,
+            }
+          : j,
       );
       return { ...state, jobs };
     }
     case "UPDATE_JOB_MECHANIC_DONE_AT": {
       const jobs = state.jobs.map((j) =>
         j.id === action.payload.id ? { ...j, mechanicMarkedDoneAt: action.payload.at ?? undefined } : j,
+      );
+      return { ...state, jobs };
+    }
+    case "UPDATE_JOB_PHOTOS": {
+      const jobs = state.jobs.map((j) =>
+        j.id === action.payload.id
+          ? {
+              ...j,
+              beforePhotoUrl: action.payload.beforePhotoUrl ?? j.beforePhotoUrl,
+              afterPhotoUrl: action.payload.afterPhotoUrl ?? j.afterPhotoUrl,
+            }
+          : j,
       );
       return { ...state, jobs };
     }
@@ -232,6 +368,14 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "CLEAR_ACTIVE_JOB":
       return { ...state, activeJobId: null };
+    case "RATE_CUSTOMER": {
+      const mechanicJobs = state.mechanicJobs.map((j) =>
+        j.id === action.payload.id
+          ? { ...j, customerRating: action.payload.customerRating, customerRatingComment: action.payload.customerRatingComment }
+          : j,
+      );
+      return { ...state, mechanicJobs };
+    }
 
     // ── Mechanic mode ────────────────────────────────────────────
     case "SET_ROLE":
@@ -239,7 +383,13 @@ export function reducer(state: AppState, action: Action): AppState {
     case "SET_DASHBOARD_ROLE_OVERRIDE":
       return { ...state, dashboardRoleOverride: action.payload };
     case "SET_MECHANIC_ONLINE":
-      return { ...state, mechanicOnline: action.payload };
+      return {
+        ...state,
+        mechanicOnline: action.payload,
+        mechanicOnlineHeartbeatAt: action.payload ? Date.now() : null,
+      };
+    case "MECHANIC_PRESENCE_HEARTBEAT":
+      return { ...state, mechanicOnlineHeartbeatAt: Date.now() };
     case "SET_DETECTED_COUNTRY":
       return { ...state, detectedCountry: action.payload };
     case "SET_REGION_PREFERENCE":
@@ -274,6 +424,13 @@ export function reducer(state: AppState, action: Action): AppState {
         const next: MechanicJob = { ...j, status: nextStatus };
         if (nextStatus === "heading_there" && !j.acceptedAt) next.acceptedAt = Date.now();
         if (nextStatus === "completed" && !j.completedAt) next.completedAt = Date.now();
+        if (action.payload.mechanicOfferSentAt !== undefined) next.mechanicOfferSentAt = action.payload.mechanicOfferSentAt ?? undefined;
+        if (action.payload.offerExpiresAt !== undefined) next.offerExpiresAt = action.payload.offerExpiresAt ?? undefined;
+        if (action.payload.customerQuoteAcceptedAt !== undefined) next.customerQuoteAcceptedAt = action.payload.customerQuoteAcceptedAt ?? undefined;
+        if (action.payload.mechanicAcceptedAt !== undefined) next.mechanicAcceptedAt = action.payload.mechanicAcceptedAt ?? undefined;
+        if (action.payload.stripePaymentIntentId !== undefined) next.stripePaymentIntentId = action.payload.stripePaymentIntentId ?? undefined;
+        if (action.payload.noShowReportedAt !== undefined) next.noShowReportedAt = action.payload.noShowReportedAt ?? undefined;
+        if (action.payload.payout !== undefined) next.payout = action.payload.payout;
         return next;
       });
       let mechanicActiveJobId = state.mechanicActiveJobId;
@@ -335,6 +492,11 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "CLEAR_INBOX":
       return { ...state, notificationsInbox: [] };
+    case "DISMISS_CANCELLATION_NOTICE":
+      return {
+        ...state,
+        recentCancellations: state.recentCancellations.filter((c) => c.jobId !== action.payload.jobId),
+      };
     case "LOAD_USER_HISTORY":
       {
         const mergedPaymentMethods =
@@ -373,6 +535,10 @@ export function reducer(state: AppState, action: Action): AppState {
           action.payload.photoUrl !== undefined
             ? action.payload.photoUrl
             : state.photoUrl,
+        phoneNumber:
+          action.payload.phoneNumber !== undefined
+            ? action.payload.phoneNumber
+            : state.phoneNumber,
       };
     case "CLEAR_USER_DATA":
       return {
@@ -381,7 +547,9 @@ export function reducer(state: AppState, action: Action): AppState {
         role: "customer",
         dashboardRoleOverride: null,
         mechanicOnline: false,
+        mechanicOnlineHeartbeatAt: null,
         userName: DEFAULT_USER_NAME,
+        phoneNumber: null,
         vehicles: [],
         selectedVehicleId: null,
         photoUrl: null,
@@ -392,6 +560,7 @@ export function reducer(state: AppState, action: Action): AppState {
         paymentMethods: [],
         defaultPaymentMethodId: null,
         notificationsInbox: [],
+        recentCancellations: [],
       };
 
     case "SET_PHOTO_URL":

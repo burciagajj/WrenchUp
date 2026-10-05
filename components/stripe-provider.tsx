@@ -11,7 +11,7 @@ export function AppStripeProvider({ children }: { children: ReactNode }) {
   if (!publishableKey) {
     if (__DEV__) {
       console.warn(
-        "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY is missing. PaymentSheet will be disabled until it is set.",
+        "Set a pk_test_ Stripe publishable key in EXPO_PUBLIC_STRIPE_TEST_PUBLISHABLE_KEY (or the legacy EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY alias) for dev builds. Live keys (EXPO_PUBLIC_STRIPE_LIVE_PUBLISHABLE_KEY) are only used in real production builds.",
       );
     }
     return <>{children}</>;
@@ -30,8 +30,8 @@ export function AppStripeProvider({ children }: { children: ReactNode }) {
   return (
     <StripeProvider
       publishableKey={publishableKey}
-      merchantIdentifier="merchant.space.manus.wrenchup"
-      urlScheme="manus20260511003727"
+      merchantIdentifier="merchant.com.wrenchup.app"
+      urlScheme="wrenchup"
     >
       <>{children}</>
     </StripeProvider>

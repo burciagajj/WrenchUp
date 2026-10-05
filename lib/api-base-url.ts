@@ -42,12 +42,32 @@ function protocolForHost(host: string): "http" | "https" {
   return "http";
 }
 
+function isExpoTunnelHost(host: string): boolean {
+  return host.endsWith(".exp.direct") || host.includes(".exp.direct:");
+}
+
+/**
+ * Expo's tunnel cannot proxy a separate local API server. Callers that have a
+ * secure Supabase fallback can use it immediately instead of waiting for the
+ * local API request to time out on a physical device.
+ */
+export function shouldUseSupabaseFallbackForLocalApi(): boolean {
+  const fromEnv = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "");
+  const host = getExpoDevHost();
+  return isNativeClient() && isLocalhostUrl(fromEnv) && !!host && isExpoTunnelHost(host);
+}
+
 /**
  * Build API base URL from the same machine / tunnel Expo uses (port 3000).
  */
 function deriveDevApiBaseUrl(): string | null {
   const host = getExpoDevHost();
   if (!host) return null;
+
+  // Expo's tunnel exposes Metro only. It cannot proxy the separate API server
+  // running on port 3000, so rewriting localhost to an exp.direct host makes
+  // native API calls hang until their timeout.
+  if (isExpoTunnelHost(host)) return null;
 
   const protocol = protocolForHost(host);
   // ngrok tunnels are usually single-port; user should set EXPO_PUBLIC_API_BASE_URL for ngrok→3000

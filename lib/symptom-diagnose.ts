@@ -9,9 +9,19 @@ export type SymptomDiagnosisResult = {
   price: number;
 };
 
+export type SymptomDiagnosisImage = {
+  base64: string;
+  mimeType: string;
+};
+
 export async function diagnoseSymptoms(
   symptoms: string,
-  vehicleInfo: string
+  vehicleInfo: string,
+  // The server now requires a signed-in session (this endpoint proxies to a
+  // paid LLM API and was previously wide open to anyone) — pass the current
+  // user's session token so this keeps working wherever it's wired up.
+  sessionToken?: string,
+  image?: SymptomDiagnosisImage
 ): Promise<SymptomDiagnosisResult> {
   let url: string;
   try {
@@ -26,8 +36,11 @@ export async function diagnoseSymptoms(
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symptoms, vehicleInfo }),
+      headers: {
+        "Content-Type": "application/json",
+        ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+      },
+      body: JSON.stringify({ symptoms, vehicleInfo, ...(image ? { image } : {}) }),
     });
   } catch {
     throw new Error(

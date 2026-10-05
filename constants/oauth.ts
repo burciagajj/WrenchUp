@@ -2,11 +2,8 @@ import * as Linking from "expo-linking";
 import * as ReactNative from "react-native";
 import { getApiBaseUrl as resolveApiBaseUrl } from "@/lib/api-base-url";
 
-// Extract scheme from bundle ID (last segment timestamp, prefixed with "manus")
-// e.g., "space.manus.my.app.t20240115103045" -> "manus20240115103045"
-const bundleId = "space.manus.wrenchup.t20260511003727";
-const timestamp = bundleId.split(".").pop()?.replace(/^t/, "") ?? "";
-const schemeFromBundleId = `manus${timestamp}`;
+// Must match `scheme` in app.config.ts.
+const schemeFromBundleId = "wrenchup";
 
 const env = {
   portal: process.env.EXPO_PUBLIC_OAUTH_PORTAL_URL ?? "",

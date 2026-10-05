@@ -4,7 +4,7 @@ import type { PickedImage } from "@/hooks/use-image-picker";
 export async function uploadMechanicDoc(
   userId: string,
   sessionToken: string,
-  docType: "license" | "certification",
+  docType: "license" | "insurance" | "certification" | "business_license" | "parts_receipt",
   image: PickedImage
 ): Promise<string> {
   const baseUrl = getApiBaseUrl();

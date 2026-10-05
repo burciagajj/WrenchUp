@@ -1,5 +1,6 @@
--- Live customer <-> mechanic dispatch tables
--- Run this in Supabase SQL Editor.
+-- Legacy live-dispatch SQL helper.
+-- Source of truth now lives in supabase/migrations/008_live_dispatch_tables.sql.
+-- Keep this only as a reference for manual dashboard runs.
 
 create table if not exists public.mechanic_presence (
   mechanic_user_id uuid primary key references auth.users(id) on delete cascade,
@@ -94,3 +95,17 @@ begin
       );
   end if;
 end $$;
+
+-- Enable Supabase Realtime for instant customer/mechanic status pushes (removes polling lag)
+-- Run this once in SQL Editor after the table + policies exist:
+--   alter publication supabase_realtime add table public.service_requests;
+--   alter publication supabase_realtime add table public.mechanic_presence;
+--
+-- IMPORTANT: Realtime respects RLS. The existing read policies already allow the customer
+-- and assigned mechanic to receive changes for their rows (and searching board for presence).
+-- After enabling, add @supabase/supabase-js (or use native WS) and subscribe:
+--   supabase.channel('dispatch')
+--     .on('postgres_changes', { event: '*', schema: 'public', table: 'service_requests', filter: `id=eq.${requestId}` }, (payload) => { ... })
+--     .subscribe()
+--
+-- This is the production path to replace the adaptive polling in CustomerLiveJobSync.

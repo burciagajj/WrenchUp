@@ -5,12 +5,14 @@ export type ServiceCode =
   | "flat_tire"
   | "lockout"
   | "car_wash"
+  | "quick_check_up"
   | "oil_change"
   | "brake_service"
   | "diagnostic"
   | "engine_repair"
   | "ac_service"
   | "general_checkup"
+  | "fuel_delivery"
   | "other";
 
 export type ServiceType = {
@@ -88,27 +90,41 @@ export type Job = {
   remoteRequestId?: string;
   isBooked?: boolean;
   scheduledFor?: number | null;
+  mechanicOfferSentAt?: number | null;
+  offerExpiresAt?: number | null;
+  customerQuoteAcceptedAt?: number | null;
+  mechanicAcceptedAt?: number | null;
+  stripePaymentIntentId?: string | null;
   vehicleId: string;
   service: ServiceCode;
   location: string;
+  customerNote?: string | null;
   status: JobStatus;
   createdAt: number; // epoch ms
   acceptedAt?: number;
   completedAt?: number;
   fare: {
-    base: number;
     service: number;
-    distance: number;
+    bookingFee: number;
     total: number;
   };
   tip?: number;
-  rating?: number;
+  rating?: number; // customer's rating of the mechanic, given by this customer
   ratingComment?: string;
+  customerRating?: number; // mechanic's rating of this customer, received by this customer
+  customerRatingComment?: string;
   pickup?: LatLng;     // captured at booking time from user's current location
   mechanicStart?: LatLng; // mechanic's start coords at booking time
   mechanicLiveCoords?: LatLng | null;
+  /** Epoch ms when mechanicLiveCoords was actually captured on the mechanic's device — null/undefined means unknown (treat as stale). */
+  mechanicLocationUpdatedAt?: number | null;
   mechanicMarkedDoneAt?: number;
   paymentMethodId?: string; // Stripe payment method ID
+  beforePhotoUrl?: string | null;
+  afterPhotoUrl?: string | null;
+  cancelReason?: string | null;
+  cancelledAt?: number | null;
+  cancelledByRole?: "customer" | "mechanic" | null;
 };
 
 export type Role = "customer" | "mechanic";
@@ -141,6 +157,8 @@ export type InAppNotification = {
   readAt?: number;
   roleScope: "customer" | "mechanic" | "all";
   route?: string;
+  actionType?: "customer_service_offer";
+  requestId?: string;
 };
 
 export type MechanicJobStatus =
@@ -163,17 +181,33 @@ export type MechanicJob = {
   service: ServiceCode;
   location: string;
   distanceMiles: number;
-  payout: number;           // dollars
+  payout: number;           // dollars, mechanic's share of the service price (excludes tip)
+  tip?: number;             // dollars, customer tip added at completion — kept separate from payout
+  rating?: number; // customer's rating of this mechanic, received by this mechanic
+  ratingComment?: string;
+  customerRating?: number; // mechanic's rating of the customer, given by this mechanic
+  customerRatingComment?: string;
   status: MechanicJobStatus;
   receivedAt: number;       // epoch ms
   acceptedAt?: number;
   completedAt?: number;
+  mechanicMarkedDoneAt?: number;
   pickup?: LatLng;          // customer location
   mechanicStart?: LatLng;   // mechanic start location
   scheduledFor?: number | null;
   customerNote?: string;
   customerHasParts?: boolean | null;
   issuePhotoUrl?: string | null;
+  mechanicOfferSentAt?: number | null;
+  offerExpiresAt?: number | null;
+  customerQuoteAcceptedAt?: number | null;
+  mechanicAcceptedAt?: number | null;
+  stripePaymentIntentId?: string | null;
+  cancelReason?: string | null;
+  cancelledAt?: number | null;
+  cancelledByRole?: "customer" | "mechanic" | null;
+  /** Epoch ms when the mechanic reported being unable to find the customer while "arrived". */
+  noShowReportedAt?: number | null;
 };
 
 export type UserDataStatus = "idle" | "loading" | "ready";
@@ -183,6 +217,7 @@ export type AppState = {
   /** Supabase profile + vehicles sync state for the signed-in user. */
   userDataStatus: UserDataStatus;
   userName: string;
+  phoneNumber: string | null;
   defaultLocation: string;
   userCoords: LatLng | null;
   locationStatus: "idle" | "requesting" | "granted" | "denied";
@@ -195,6 +230,15 @@ export type AppState = {
   role: Role;
   dashboardRoleOverride: Role | null;
   mechanicOnline: boolean;
+  /**
+   * Epoch ms of the last successful presence heartbeat/foreground resync
+   * while online. Used purely on cold start (see StoreProvider hydration in
+   * lib/store.tsx) to detect "the app was killed while online and never got
+   * to flip mechanicOnline back to false" — if this is stale by more than
+   * PRESENCE_STALE_AFTER_MS when the persisted state rehydrates, the toggle
+   * is reset to offline instead of silently trusting a days-old "online".
+   */
+  mechanicOnlineHeartbeatAt: number | null;
   mechanicJobs: MechanicJob[];
   mechanicActiveJobId: string | null;
   /** Country code derived from reverse geocoding the user's coords ("US" or "MX"). */
@@ -208,4 +252,13 @@ export type AppState = {
   paymentStatus: "idle" | "processing" | "success" | "error";
   paymentError: string | null;
   notificationsInbox: InAppNotification[];
+
+  /** Transient but persisted notices for customer cancellations (shown as dismissible banners on home until dismissed) */
+  recentCancellations: Array<{
+    jobId: string;
+    service?: string;
+    location?: string;
+    isBooked?: boolean;
+    at: number;
+  }>;
 };

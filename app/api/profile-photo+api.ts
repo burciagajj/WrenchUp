@@ -3,6 +3,8 @@
  * Set SUPABASE_SERVICE_ROLE_KEY in .env for Storage uploads; otherwise the app uses data-URL fallback.
  */
 
+import { base64ToBytes } from "@/lib/_core/base64";
+
 const BUCKET_ID = "profile-photos";
 
 function getConfig() {
@@ -35,11 +37,46 @@ async function ensureBucket(supabaseUrl: string, serviceKey: string) {
   };
   const check = await fetch(`${supabaseUrl}/storage/v1/bucket/${BUCKET_ID}`, { headers });
   if (check.ok) return;
-  await fetch(`${supabaseUrl}/storage/v1/bucket`, {
+  // Private, matching every other document/photo bucket in this app
+  // (mechanic-documents, vehicle-documents, service-evidence) — this bucket
+  // holds the mandatory admin-reviewed face-verification photo, which
+  // shouldn't be fetchable by anyone who obtains the URL with no auth at
+  // all. Access is via a signed URL (see createSignedUrl below) instead.
+  const create = await fetch(`${supabaseUrl}/storage/v1/bucket`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ id: BUCKET_ID, name: BUCKET_ID, public: true }),
+    body: JSON.stringify({ id: BUCKET_ID, name: BUCKET_ID, public: false }),
   });
+  if (!create.ok) {
+    const text = await create.text();
+    throw new Error(text || `Could not create storage bucket ${BUCKET_ID}`);
+  }
+}
+
+// 1 year — long enough that avatar_url behaves like a normal stable URL for
+// every existing display call site (tab bar, approval-pending screen, admin
+// review), but it's a real signed token that only this server (holding
+// SUPABASE_SERVICE_ROLE_KEY) can mint, not a permanently-guessable public
+// path. Re-signed automatically on every re-upload; see
+// scripts/resign-profile-photos.mjs for one-time migration of older rows.
+const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365;
+
+async function createSignedUrl(supabaseUrl: string, serviceKey: string, path: string): Promise<string> {
+  const res = await fetch(`${supabaseUrl}/storage/v1/object/sign/${BUCKET_ID}/${encodeURI(path)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+    },
+    body: JSON.stringify({ expiresIn: SIGNED_URL_TTL_SECONDS }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.signedURL) {
+    throw new Error(data?.message || data?.error || "Could not create signed URL");
+  }
+  const signedPath = String(data.signedURL);
+  return signedPath.startsWith("http") ? signedPath : `${supabaseUrl}/storage/v1${signedPath}`;
 }
 
 export async function POST(request: Request) {
@@ -71,7 +108,7 @@ export async function POST(request: Request) {
     await ensureBucket(supabaseUrl, serviceKey);
 
     const path = `${userId}/${userId}_${Date.now()}.jpg`;
-    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const bytes = base64ToBytes(base64);
 
     const uploadRes = await fetch(
       `${supabaseUrl}/storage/v1/object/${BUCKET_ID}/${path}`,
@@ -88,11 +125,18 @@ export async function POST(request: Request) {
     );
 
     if (!uploadRes.ok) {
-      const err = await uploadRes.json().catch(() => ({}));
-      return Response.json({ error: err.message || "Upload failed" }, { status: 500 });
+      const text = await uploadRes.text();
+      let message = text || "Upload failed";
+      try {
+        const parsed = text ? JSON.parse(text) : null;
+        message = parsed?.message || parsed?.error || message;
+      } catch {
+        // keep raw text
+      }
+      return Response.json({ error: message }, { status: 500 });
     }
 
-    const publicUrl = `${supabaseUrl}/storage/v1/object/public/${BUCKET_ID}/${path}`;
+    const publicUrl = await createSignedUrl(supabaseUrl, serviceKey, path);
     return Response.json({ publicUrl, path });
   } catch (error) {
     console.error("[api/profile-photo] Error:", error);

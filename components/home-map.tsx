@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import MapView from "react-native-maps";
-import { useStore } from "@/lib/store";
+import { useStoreSelector } from "@/lib/store";
 import { regionFor } from "@/lib/geo";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { haptic } from "@/lib/haptics";
@@ -14,6 +14,30 @@ const FALLBACK_REGION = {
   longitudeDelta: 0.05,
 };
 
+// Dark map style with teal tint on roads and parks (instead of green).
+// Kept at module scope (not recreated per render) — customMapStyle getting a
+// new array identity on every render (e.g. from userCoords updating as GPS
+// refines) makes react-native-maps re-trigger Android's native setMapStyle()
+// repeatedly, which can interrupt tile loading before it ever completes.
+const DARK_MAP_STYLE = [
+  { elementType: "geometry", stylers: [{ color: "#1a1a1a" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#8a8a8a" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#1a1a1a" }] },
+  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#2a2a2a" }] },
+  { featureType: "administrative.land_parcel", elementType: "labels.text.fill", stylers: [{ color: "#6a6a6a" }] },
+  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#2a2a2a" }] },
+  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#6a6a6a" }] },
+  { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#0f3d3a" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#2a2a2a" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#1a1a1a" }] },
+  { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#2f3f3c" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#2a3f3c" }] },
+  { featureType: "road.local", elementType: "geometry", stylers: [{ color: "#2a2a2a" }] },
+  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#2a2a2a" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0a1a2a" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#4a6a8a" }] },
+];
+
 /**
  * Full-screen home map — reads coords from the global store (useLocationBootstrap).
  * Does not request permissions on its own.
@@ -23,55 +47,32 @@ type HomeMapProps = {
 };
 
 export function HomeMap({ locateBottomOffset = 118 }: HomeMapProps) {
-  const { state } = useStore();
+  const userCoords = useStoreSelector(s => s.userCoords);
+  const locationStatus = useStoreSelector(s => s.locationStatus);
   const mapRef = useRef<MapView>(null);
 
   const region = useMemo(() => {
-    if (state.userCoords) {
-      return regionFor([state.userCoords], 1.25);
+    if (userCoords) {
+      return regionFor([userCoords], 1.25);
     }
     return FALLBACK_REGION;
-  }, [state.userCoords?.latitude, state.userCoords?.longitude]);
+  }, [userCoords?.latitude, userCoords?.longitude]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!state.userCoords || !mapRef.current) return;
-    mapRef.current.animateToRegion(regionFor([state.userCoords], 1.25), 450);
-  }, [state.userCoords?.latitude, state.userCoords?.longitude]);
+    if (!userCoords || !mapRef.current) return;
+    mapRef.current.animateToRegion(regionFor([userCoords], 1.25), 450);
+  }, [userCoords?.latitude, userCoords?.longitude]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const locating = state.locationStatus === "requesting" && !state.userCoords;
+  const locating = locationStatus === "requesting" && !userCoords;
   const handleLocateMe = () => {
-    if (!state.userCoords || !mapRef.current) return;
+    if (!userCoords || !mapRef.current) return;
     haptic.light();
-    mapRef.current.animateToRegion(regionFor([state.userCoords], 1.25), 350);
+    mapRef.current.animateToRegion(regionFor([userCoords], 1.25), 350);
   };
 
-  if (!state.hydrated) {
-    return (
-      <View style={styles.fallback}>
-        <ActivityIndicator size="large" color="#F97316" />
-      </View>
-    );
-  }
-
-  // Dark map style (black background with dark green roads like Lyft driver app)
-  const darkMapStyle = [
-    { elementType: "geometry", stylers: [{ color: "#1a1a1a" }] },
-    { elementType: "labels.text.fill", stylers: [{ color: "#8a8a8a" }] },
-    { elementType: "labels.text.stroke", stylers: [{ color: "#1a1a1a" }] },
-    { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#2a2a2a" }] },
-    { featureType: "administrative.land_parcel", elementType: "labels.text.fill", stylers: [{ color: "#6a6a6a" }] },
-    { featureType: "poi", elementType: "geometry", stylers: [{ color: "#2a2a2a" }] },
-    { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#6a6a6a" }] },
-    { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#1a3a1a" }] },
-    { featureType: "road", elementType: "geometry", stylers: [{ color: "#2a2a2a" }] },
-    { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#1a1a1a" }] },
-    { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#3a3a3a" }] },
-    { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#3a4a3a" }] },
-    { featureType: "road.local", elementType: "geometry", stylers: [{ color: "#2a2a2a" }] },
-    { featureType: "transit", elementType: "geometry", stylers: [{ color: "#2a2a2a" }] },
-    { featureType: "water", elementType: "geometry", stylers: [{ color: "#0a1a2a" }] },
-    { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#4a6a8a" }] },
-  ];
+  // Do not block rendering on !hydrated here (outer AppBootstrapGate + force-ready
+  // handles initial wait; keeping map mounted allows graceful population of coords
+  // and prevents permanent buffering spinner in the map area if gate forces early).
 
   return (
     <View style={styles.root}>
@@ -79,7 +80,7 @@ export function HomeMap({ locateBottomOffset = 118 }: HomeMapProps) {
         ref={mapRef}
         style={StyleSheet.absoluteFill}
         initialRegion={region}
-        customMapStyle={darkMapStyle}
+        customMapStyle={DARK_MAP_STYLE}
         showsUserLocation
         showsMyLocationButton={false}
         showsCompass={false}
@@ -109,12 +110,6 @@ const styles = StyleSheet.create({
   root: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "#1a1a2e",
-  },
-  fallback: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#1a1a2e",
-    alignItems: "center",
-    justifyContent: "center",
   },
   locatingOverlay: {
     position: "absolute",

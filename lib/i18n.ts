@@ -1,10 +1,11 @@
 import type { LocaleCode, RegionCode, RegionPreference } from "./types";
 
 // USD -> MXN approximate conversion for display when region is MX (rough seed value).
-// We multiply prices by this *after* the 60% Mexico discount so it feels local in pesos.
-const USD_TO_MXN_DISPLAY = 17.5;
-/** Multiplier applied to all USD estimate prices when region is MX. */
-export const MX_DISCOUNT_MULTIPLIER = 0.4; // i.e. 60% off
+// We multiply prices by this *after* the Mexico discount so it feels local in pesos.
+export const USD_TO_MXN_DISPLAY = 17.5;
+/** Multiplier applied to all USD estimate prices when region is MX — Mexico
+ * customers pay 60% of the US price (a 40% discount). */
+export const MX_DISCOUNT_MULTIPLIER = 0.6;
 
 export type StringKey =
   | "common.cancel"
@@ -50,6 +51,8 @@ export type StringKey =
   | "home.symptom.try_again"
   | "home.symptom.error_short"
   | "home.symptom.error_failed"
+  | "home.symptom.add_photo"
+  | "home.symptom.remove_photo"
   | "home.top_mechanics"
   | "home.see_all"
   | "home.no_vehicle"
@@ -58,23 +61,27 @@ export type StringKey =
   | "service.flat_tire"
   | "service.lockout"
   | "service.car_wash"
+  | "service.quick_check_up"
   | "service.oil_change"
   | "service.brake_service"
   | "service.diagnostic"
   | "service.engine_repair"
   | "service.ac_service"
   | "service.general_checkup"
+  | "service.fuel_delivery"
   | "service.other"
   | "service.battery_jump_desc"
   | "service.flat_tire_desc"
   | "service.lockout_desc"
   | "service.car_wash_desc"
+  | "service.quick_check_up_desc"
   | "service.oil_change_desc"
   | "service.brake_service_desc"
   | "service.diagnostic_desc"
   | "service.engine_repair_desc"
   | "service.ac_service_desc"
   | "service.general_checkup_desc"
+  | "service.fuel_delivery_desc"
   | "service.other_desc"
   | "service_select.title"
   | "service_select.cta_select"
@@ -104,6 +111,8 @@ export type StringKey =
   | "confirm.fare_estimate"
   | "confirm.booking_fee"
   | "confirm.dispatch"
+  | "confirm.dispatch_estimated"
+  | "confirm.dispatch_estimated_note"
   | "confirm.estimated_total"
   | "confirm.disclaimer"
   | "confirm.cta_confirm"
@@ -113,6 +122,7 @@ export type StringKey =
   | "tracking.searching"
   | "tracking.accepted"
   | "tracking.arriving_in"
+  | "tracking.on_the_way_no_eta"
   | "tracking.arrived"
   | "tracking.in_progress"
   | "tracking.completed"
@@ -318,7 +328,24 @@ export type StringKey =
   | "auth.signup.error_exists"
   | "auth.signup.error_weak_password"
   | "auth.signup.error_session"
-  | "auth.signup.error_verify_email";
+  | "auth.signup.error_verify_email"
+  | "auth.signup.customer_title"
+  | "auth.signup.customer_subtitle"
+  | "auth.signup.mechanic_title"
+  | "auth.signup.mechanic_subtitle"
+  | "auth.signup.name_label"
+  | "auth.signup.name_placeholder"
+  | "auth.signup.terms_prefix"
+  | "auth.signup.terms_of_service"
+  | "auth.signup.privacy_policy"
+  | "auth.signup.safety_policy"
+  | "auth.signup.terms_suffix"
+  | "auth.signup.must_accept_terms"
+  | "auth.signup.enable_biometrics"
+  | "auth.signup.password_strength"
+  | "auth.signup.strength_weak"
+  | "auth.signup.strength_medium"
+  | "auth.signup.strength_strong";
 
 export type Strings = Record<StringKey, string>;
 
@@ -366,31 +393,37 @@ export const STRINGS_EN: Strings = {
   "home.symptom.try_again": "Describe a different issue",
   "home.symptom.error_short": "Please add a few more details about the problem.",
   "home.symptom.error_failed": "Could not diagnose right now. Please try again.",
+  "home.symptom.add_photo": "Add a photo of the issue (optional)",
+  "home.symptom.remove_photo": "Remove",
   "home.top_mechanics": "Top mechanics near you",
   "home.see_all": "See all",
   "home.no_vehicle": "No vehicle selected",
-  "home.discount_banner": "México pricing active — 60% off displayed estimates",
+  "home.discount_banner": "México pricing active — 40% off displayed estimates",
   "service.battery_jump": "Battery Jump",
   "service.flat_tire": "Flat Tire",
   "service.lockout": "Lockout",
   "service.car_wash": "Car Wash",
+  "service.quick_check_up": "Quick Check-Up",
   "service.oil_change": "Oil Change",
   "service.brake_service": "Brake Service",
   "service.diagnostic": "Diagnostic",
   "service.engine_repair": "Engine Repair",
   "service.ac_service": "A/C Service",
   "service.general_checkup": "Check-Up",
+  "service.fuel_delivery": "Fuel Delivery",
   "service.other": "Other",
   "service.battery_jump_desc": "Jump start a dead battery or test/replace it on the spot.",
   "service.flat_tire_desc": "Tire change, patch, or spare installation at your location.",
   "service.lockout_desc": "Unlock your vehicle when your keys are locked inside.",
   "service.car_wash_desc": "On-site exterior wash with a quick interior cleanup.",
+  "service.quick_check_up_desc": "A fast visual check that does not require a booking.",
   "service.oil_change_desc": "Full synthetic oil change and filter replacement.",
   "service.brake_service_desc": "Pads, rotors, fluid check, and brake inspection.",
   "service.diagnostic_desc": "OBD-II scan and full system diagnostic with written report.",
   "service.engine_repair_desc": "On-site fixes for common engine issues and minor repairs.",
   "service.ac_service_desc": "Recharge, leak check, and A/C performance inspection.",
   "service.general_checkup_desc": "Multi-point inspection covering fluids, belts, and brakes.",
+  "service.fuel_delivery_desc": "Emergency gas delivery when you run out on the road.",
   "service.other_desc": "Tell us what you need and submit a custom booking request.",
   "service_select.title": "Choose a service",
   "service_select.cta_select": "Select a service",
@@ -418,8 +451,10 @@ export const STRINGS_EN: Strings = {
   "confirm.location": "Location",
   "confirm.payment": "Payment",
   "confirm.fare_estimate": "Fare estimate",
-  "confirm.booking_fee": "Booking fee",
+  "confirm.booking_fee": "Dispatch fee",
   "confirm.dispatch": "Dispatch ({distance} {unit})",
+  "confirm.dispatch_estimated": "Dispatch fee (estimated)",
+  "confirm.dispatch_estimated_note": "We haven't matched a mechanic yet, so this is a flat placeholder — it's recalculated once one accepts your job.",
   "confirm.estimated_total": "Estimated total",
   "confirm.disclaimer": "Final amount may vary based on actual time and parts. You'll review the receipt before payment.",
   "confirm.cta_confirm": "Confirm & Request",
@@ -429,6 +464,7 @@ export const STRINGS_EN: Strings = {
   "tracking.searching": "Finding the best nearby mechanic…",
   "tracking.accepted": "Mechanic accepted your request",
   "tracking.arriving_in": "Arriving in {minutes} min",
+  "tracking.on_the_way_no_eta": "On the way",
   "tracking.arrived": "Your mechanic has arrived",
   "tracking.in_progress": "Service in progress",
   "tracking.completed": "Service complete",
@@ -517,8 +553,8 @@ export const STRINGS_EN: Strings = {
   "profile.region_mx": "México",
   "profile.region_label_auto": "Follows your location",
   "profile.region_label_us": "USD pricing, English",
-  "profile.region_label_mx": "MXN pricing, Latin Spanish (60% off)",
-  "profile.region_help": "Mechanics or customers in México get prices in pesos with a 60% discount on estimates.",
+  "profile.region_label_mx": "MXN pricing, Latin Spanish (40% off)",
+  "profile.region_help": "Mechanics or customers in México get prices in pesos with a 40% discount on estimates.",
   "mech_home.dashboard": "Mechanic dashboard",
   "mech_home.online": "ONLINE",
   "mech_home.offline": "OFFLINE",
@@ -635,6 +671,23 @@ export const STRINGS_EN: Strings = {
   "auth.signup.error_weak_password": "Password is too weak. Use at least 8 characters with letters and numbers.",
   "auth.signup.error_session": "Account created but session could not start. Please sign in to finish your profile.",
   "auth.signup.error_verify_email": "Account created! Check your email to verify, then sign in to complete your profile.",
+  "auth.signup.customer_title": "Sign up as a Customer",
+  "auth.signup.customer_subtitle": "Request trusted mechanics for your vehicles. Quick and reliable service.",
+  "auth.signup.mechanic_title": "Sign up as a Mechanic",
+  "auth.signup.mechanic_subtitle": "Offer your services and get matched with nearby customers. Earn on your schedule.",
+  "auth.signup.name_label": "Full Name",
+  "auth.signup.name_placeholder": "John Doe",
+  "auth.signup.terms_prefix": "I agree to the ",
+  "auth.signup.terms_of_service": "Terms of Service",
+  "auth.signup.privacy_policy": "Privacy Policy",
+  "auth.signup.safety_policy": "Safety & Payments Policy",
+  "auth.signup.terms_suffix": ".",
+  "auth.signup.must_accept_terms": "You must accept the terms and policies to create an account.",
+  "auth.signup.enable_biometrics": "Enable biometrics for faster, secure login (recommended)",
+  "auth.signup.password_strength": "Password strength",
+  "auth.signup.strength_weak": "Weak",
+  "auth.signup.strength_medium": "Medium",
+  "auth.signup.strength_strong": "Strong",
 };
 
 export const STRINGS_ES_MX: Strings = {
@@ -681,31 +734,37 @@ export const STRINGS_ES_MX: Strings = {
   "home.symptom.try_again": "Describir otro problema",
   "home.symptom.error_short": "Agrega un poco más de detalle sobre el problema.",
   "home.symptom.error_failed": "No se pudo diagnosticar. Intenta de nuevo.",
+  "home.symptom.add_photo": "Agrega una foto del problema (opcional)",
+  "home.symptom.remove_photo": "Quitar",
   "home.top_mechanics": "Mejores mecánicos cerca de ti",
   "home.see_all": "Ver todos",
   "home.no_vehicle": "Sin vehículo seleccionado",
-  "home.discount_banner": "Precios México activos — 60% de descuento en estimados",
+  "home.discount_banner": "Precios México activos — 40% de descuento en estimados",
   "service.battery_jump": "Pasar corriente",
   "service.flat_tire": "Llanta ponchada",
   "service.lockout": "Llaves adentro",
   "service.car_wash": "Lavado de auto",
+  "service.quick_check_up": "Revisión rápida",
   "service.oil_change": "Cambio de aceite",
   "service.brake_service": "Servicio de frenos",
   "service.diagnostic": "Diagnóstico",
   "service.engine_repair": "Reparación de motor",
   "service.ac_service": "Servicio de A/C",
   "service.general_checkup": "Revisión general",
+  "service.fuel_delivery": "Entrega de gasolina",
   "service.other": "Otro",
   "service.battery_jump_desc": "Pasamos corriente o probamos/cambiamos la batería en el momento.",
   "service.flat_tire_desc": "Cambio de llanta, parche o instalación de la refacción donde estés.",
   "service.lockout_desc": "Abrimos tu vehículo cuando las llaves se quedaron dentro.",
   "service.car_wash_desc": "Lavado exterior a domicilio con limpieza interior rápida.",
+  "service.quick_check_up_desc": "Una revisión visual rápida que no requiere agendar.",
   "service.oil_change_desc": "Cambio de aceite sintético completo y filtro nuevo.",
   "service.brake_service_desc": "Pastillas, discos, revisión del líquido e inspección de frenos.",
   "service.diagnostic_desc": "Escaneo OBD-II y diagnóstico completo con reporte por escrito.",
   "service.engine_repair_desc": "Reparaciones comunes y arreglos menores de motor en sitio.",
   "service.ac_service_desc": "Recarga, prueba de fugas y revisión de desempeño del A/C.",
   "service.general_checkup_desc": "Inspección de varios puntos: fluidos, bandas y frenos.",
+  "service.fuel_delivery_desc": "Entrega de gasolina de emergencia cuando te quedas sin combustible en el camino.",
   "service.other_desc": "Cuéntanos tu problema y envía una reserva personalizada.",
   "service_select.title": "Elige un servicio",
   "service_select.cta_select": "Selecciona un servicio",
@@ -733,8 +792,10 @@ export const STRINGS_ES_MX: Strings = {
   "confirm.location": "Ubicación",
   "confirm.payment": "Pago",
   "confirm.fare_estimate": "Estimado de tarifa",
-  "confirm.booking_fee": "Cargo por reserva",
+  "confirm.booking_fee": "Tarifa de despacho",
   "confirm.dispatch": "Traslado ({distance} {unit})",
+  "confirm.dispatch_estimated": "Tarifa de traslado (estimada)",
+  "confirm.dispatch_estimated_note": "Aún no hemos asignado un mecánico, así que este es un marcador fijo — se recalcula en cuanto uno acepte tu trabajo.",
   "confirm.estimated_total": "Total estimado",
   "confirm.disclaimer": "El monto final puede variar según el tiempo real y las refacciones. Verás el recibo antes de pagar.",
   "confirm.cta_confirm": "Confirmar y solicitar",
@@ -744,6 +805,7 @@ export const STRINGS_ES_MX: Strings = {
   "tracking.searching": "Buscando al mejor mecánico cercano…",
   "tracking.accepted": "El mecánico aceptó tu solicitud",
   "tracking.arriving_in": "Llega en {minutes} min",
+  "tracking.on_the_way_no_eta": "En camino",
   "tracking.arrived": "Tu mecánico ha llegado",
   "tracking.in_progress": "Servicio en curso",
   "tracking.completed": "Servicio terminado",
@@ -832,8 +894,8 @@ export const STRINGS_ES_MX: Strings = {
   "profile.region_mx": "México",
   "profile.region_label_auto": "Sigue tu ubicación",
   "profile.region_label_us": "Precios en USD, inglés",
-  "profile.region_label_mx": "Precios en MXN, español (60% de descuento)",
-  "profile.region_help": "Mecánicos o clientes en México ven precios en pesos con 60% de descuento en los estimados.",
+  "profile.region_label_mx": "Precios en MXN, español (40% de descuento)",
+  "profile.region_help": "Mecánicos o clientes en México ven precios en pesos con 40% de descuento en los estimados.",
   "mech_home.dashboard": "Panel del mecánico",
   "mech_home.online": "EN LÍNEA",
   "mech_home.offline": "DESCONECTADO",
@@ -950,6 +1012,23 @@ export const STRINGS_ES_MX: Strings = {
   "auth.signup.error_weak_password": "Contraseña débil. Usa al menos 8 caracteres con letras y números.",
   "auth.signup.error_session": "Cuenta creada, pero no se inició la sesión. Inicia sesión para terminar tu perfil.",
   "auth.signup.error_verify_email": "¡Cuenta creada! Verifica tu correo y luego inicia sesión para completar tu perfil.",
+  "auth.signup.customer_title": "Regístrate como Cliente",
+  "auth.signup.customer_subtitle": "Solicita mecánicos de confianza para tus vehículos. Servicio rápido y confiable.",
+  "auth.signup.mechanic_title": "Regístrate como Mecánico",
+  "auth.signup.mechanic_subtitle": "Ofrece tus servicios y conecta con clientes cercanos. Gana en tu horario.",
+  "auth.signup.name_label": "Nombre completo",
+  "auth.signup.name_placeholder": "Juan Pérez",
+  "auth.signup.terms_prefix": "Acepto los ",
+  "auth.signup.terms_of_service": "Términos de Servicio",
+  "auth.signup.privacy_policy": "Política de Privacidad",
+  "auth.signup.safety_policy": "Política de Seguridad y Pagos",
+  "auth.signup.terms_suffix": ".",
+  "auth.signup.must_accept_terms": "Debes aceptar los términos y políticas para crear una cuenta.",
+  "auth.signup.enable_biometrics": "Habilitar biometría para inicio de sesión más rápido y seguro (recomendado)",
+  "auth.signup.password_strength": "Fortaleza de la contraseña",
+  "auth.signup.strength_weak": "Débil",
+  "auth.signup.strength_medium": "Media",
+  "auth.signup.strength_strong": "Fuerte",
 };
 
 const TABLES: Record<LocaleCode, Strings> = {
@@ -987,13 +1066,30 @@ export function translate(locale: LocaleCode, key: StringKey, params?: Record<st
 }
 
 /**
+ * Convert a USD-denominated fare amount into the amount that should actually
+ * be charged to (and stored for) a customer in the given region — for MX
+ * this applies the regional discount AND converts to pesos; for US it's a
+ * no-op passthrough. This is the number that must feed Stripe's amount and
+ * any DB column a later capture/payout step will read back and multiply by
+ * 100 with no further currency logic (see app/api/payment-capture-sweep+api.ts).
+ * Passing a raw, unconverted USD number as if it were pesos would charge a
+ * MX customer at roughly 1/17.5th of the intended price.
+ */
+export function toChargeableAmount(usdAmount: number, region: RegionCode): number {
+  if (region === "MX") {
+    return +(usdAmount * MX_DISCOUNT_MULTIPLIER * USD_TO_MXN_DISPLAY).toFixed(2);
+  }
+  return +usdAmount.toFixed(2);
+}
+
+/**
  * Format a price (USD value coming from fare logic) for display in the user's region.
- * In MX, applies the 60% discount and converts to MXN with a peso symbol.
+ * In MX, applies the discount, converts to MXN, and uses comma decimals.
  */
 export function formatPrice(usdAmount: number, region: RegionCode): string {
   if (region === "MX") {
-    const mxn = usdAmount * MX_DISCOUNT_MULTIPLIER * USD_TO_MXN_DISPLAY;
-    return `$${formatNumber(mxn, "es-MX", 0)} MXN`;
+    const mxn = toChargeableAmount(usdAmount, region);
+    return `$${formatNumber(mxn, "es-MX", 2)} MXN`;
   }
   // USD with 2 decimals like before
   return `$${formatNumber(usdAmount, "en", 2)}`;
@@ -1001,16 +1097,26 @@ export function formatPrice(usdAmount: number, region: RegionCode): string {
 
 function formatNumber(value: number, locale: LocaleCode, fractionDigits: number): string {
   try {
-    return new Intl.NumberFormat(locale === "es-MX" ? "es-MX" : "en-US", {
+    const formatted = new Intl.NumberFormat(locale === "es-MX" ? "en-US" : "en-US", {
       minimumFractionDigits: fractionDigits,
       maximumFractionDigits: fractionDigits,
     }).format(value);
+    if (locale === "es-MX") {
+      return formatted.replace(/,/g, "__THOUSANDS__").replace(/\./g, ",").replace(/__THOUSANDS__/g, ".");
+    }
+    return formatted;
   } catch {
-    return value.toFixed(fractionDigits);
+    const fallback = value.toFixed(fractionDigits);
+    if (locale === "es-MX") {
+      return fallback.replace(/\./g, ",");
+    }
+    return fallback;
   }
 }
 
-/** Apply Mexico discount (40% of the original) to a USD-denominated number. */
+/** Apply the Mexico discount (60% of the original) to a USD-denominated
+ * number, without currency conversion. For the number that should actually
+ * be charged/stored (discount + MXN conversion), use toChargeableAmount. */
 export function applyDiscount(usdAmount: number, region: RegionCode): number {
   return region === "MX" ? usdAmount * MX_DISCOUNT_MULTIPLIER : usdAmount;
 }

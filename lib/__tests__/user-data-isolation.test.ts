@@ -160,7 +160,7 @@ describe("User Data Isolation (v1.6)", () => {
           location: "123 Main St",
           status: "searching",
           createdAt: Date.now(),
-          fare: { base: 50, service: 10, distance: 5, total: 65 },
+          fare: { service: 10, bookingFee: 55, total: 65 },
         },
       });
 

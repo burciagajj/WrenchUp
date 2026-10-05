@@ -13,11 +13,32 @@ import { loadVehicleApprovals } from "@/lib/vehicle-approvals";
 import { fetchDispatchHistoryForUser } from "@/lib/live-dispatch";
 import { buildSnapshotFromDispatchRows } from "@/lib/remote-job-history";
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function UserDataSync() {
   const { user, isLoading: authLoading } = useAuth();
   const { state, dispatch } = useStore();
   const inFlightRef = useRef(false);
   const lastSyncedUserIdRef = useRef<string | null>(null);
+  const stateSnapshotRef = useRef({
+    jobs: state.jobs,
+    mechanicJobs: state.mechanicJobs,
+    paymentMethods: state.paymentMethods,
+    defaultPaymentMethodId: state.defaultPaymentMethodId,
+    recentCancellations: state.recentCancellations,
+  });
+
+  useEffect(() => {
+    stateSnapshotRef.current = {
+      jobs: state.jobs,
+      mechanicJobs: state.mechanicJobs,
+      paymentMethods: state.paymentMethods,
+      defaultPaymentMethodId: state.defaultPaymentMethodId,
+      recentCancellations: state.recentCancellations,
+    };
+  }, [state.jobs, state.mechanicJobs, state.paymentMethods, state.defaultPaymentMethodId, state.recentCancellations]);
 
   useEffect(() => {
     // Wait until persisted local state is applied before writing Supabase data
@@ -33,6 +54,8 @@ export function UserDataSync() {
       id: user.id,
       email: user.email,
       role: user.role,
+      fullName: user.fullName,
+      displayName: user.displayName,
     };
 
     // Always align app role with authenticated account role.
@@ -55,11 +78,25 @@ export function UserDataSync() {
     (async () => {
       inFlightRef.current = true;
       dispatch({ type: "SET_USER_DATA_STATUS", payload: "loading" });
+
+      let done = false;
+      const loadTimeout = setTimeout(() => {
+        if (!cancelled && !done) {
+          console.warn("[UserDataSync] User data load timed out — forcing idle to prevent permanent buffering on home screen");
+          dispatch({ type: "SET_USER_DATA_STATUS", payload: "idle" });
+        }
+      }, 9000);
+
       try {
-        const storedToken = await getSessionToken();
+        let storedToken = await getSessionToken();
+        if (!storedToken) {
+          await wait(250);
+          storedToken = await getSessionToken();
+        }
         if (cancelled || !storedToken) {
           console.log("[UserDataSync] No session token — skipping profile/vehicle load");
           dispatch({ type: "SET_USER_DATA_STATUS", payload: "idle" });
+          done = true;
           return;
         }
 
@@ -85,16 +122,52 @@ export function UserDataSync() {
           dispatch({ type: "LOAD_USER_HISTORY", payload: cachedHistory });
         }
         // Critical: rebuild jobs/history from Supabase so progress survives device changes.
+        // Merge remote (authoritative for cross-device) with any legacy local-only jobs.
         try {
           const remoteRows = await fetchDispatchHistoryForUser(sessionToken, user.id);
           if (!cancelled && remoteRows.length > 0) {
+            const snapshot = stateSnapshotRef.current;
+            const recentCancellationIds = [
+              ...new Set([
+                ...(cachedHistory?.jobs ?? snapshot.jobs)
+                  .filter((job) => job.status === "cancelled" && !!job.remoteRequestId)
+                  .map((job) => job.remoteRequestId as string),
+                ...(cachedHistory?.mechanicJobs ?? snapshot.mechanicJobs)
+                  .filter((job) => job.status === "cancelled" && !!job.remoteRequestId)
+                  .map((job) => job.remoteRequestId as string),
+                ...stateSnapshotRef.current.recentCancellations.map((item) => item.jobId),
+              ]),
+            ];
             const remoteSnapshot = buildSnapshotFromDispatchRows(
               remoteRows,
               authUser,
-              cachedHistory?.paymentMethods ?? state.paymentMethods,
-              cachedHistory?.defaultPaymentMethodId ?? state.defaultPaymentMethodId,
+              cachedHistory?.paymentMethods ?? snapshot.paymentMethods,
+              cachedHistory?.defaultPaymentMethodId ?? snapshot.defaultPaymentMethodId,
+              recentCancellationIds,
             );
-            dispatch({ type: "LOAD_USER_HISTORY", payload: remoteSnapshot });
+            // Merge: remote jobs take precedence; keep legacy local jobs that have no remoteRequestId
+            const existingJobs = cachedHistory?.jobs ?? snapshot.jobs;
+            const localOnlyJobs = existingJobs.filter((j: any) => !j.remoteRequestId);
+            const remoteIds = new Set(remoteSnapshot.jobs.map((j: any) => j.remoteRequestId).filter(Boolean));
+            const mergedJobs = [
+              ...remoteSnapshot.jobs,
+              ...localOnlyJobs.filter((j: any) => !j.remoteRequestId || !remoteIds.has(j.remoteRequestId)),
+            ];
+            const existingMJobs = cachedHistory?.mechanicJobs ?? snapshot.mechanicJobs;
+            const localOnlyMJobs = existingMJobs.filter((j: any) => !j.remoteRequestId);
+            const remoteMIds = new Set(remoteSnapshot.mechanicJobs.map((j: any) => j.remoteRequestId || j.id).filter(Boolean));
+            const mergedMJobs = [
+              ...remoteSnapshot.mechanicJobs,
+              ...localOnlyMJobs.filter((j: any) => !(j.remoteRequestId && remoteMIds.has(j.remoteRequestId)) && !remoteMIds.has(j.id)),
+            ];
+            dispatch({
+              type: "LOAD_USER_HISTORY",
+              payload: {
+                ...remoteSnapshot,
+                jobs: mergedJobs,
+                mechanicJobs: mergedMJobs,
+              },
+            });
           }
         } catch (remoteErr) {
           console.error("[UserDataSync] Remote job history sync failed:", remoteErr);
@@ -102,12 +175,14 @@ export function UserDataSync() {
         if (!cancelled) {
           lastSyncedUserIdRef.current = user.id;
         }
+        done = true;
       } catch (err) {
         console.error("[UserDataSync] Failed to sync user data:", err);
         if (!cancelled) {
           dispatch({ type: "SET_USER_DATA_STATUS", payload: "idle" });
         }
       } finally {
+        clearTimeout(loadTimeout);
         inFlightRef.current = false;
       }
     })();
@@ -115,7 +190,16 @@ export function UserDataSync() {
     return () => {
       cancelled = true;
     };
-  }, [state.hydrated, authLoading, user?.id, user?.email, user?.role, dispatch, state.paymentMethods, state.defaultPaymentMethodId]);
+  }, [
+    state.hydrated,
+    authLoading,
+    user?.id,
+    user?.email,
+    user?.role,
+    user?.fullName,
+    user?.displayName,
+    dispatch,
+  ]);
 
   useEffect(() => {
     if (!state.hydrated) return;

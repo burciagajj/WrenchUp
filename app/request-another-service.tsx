@@ -2,18 +2,17 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
 import { useActiveJob } from "@/lib/store";
-import { useLocaleContext } from "@/hooks/use-locale";
+import { useL } from "@/hooks/use-locale";
 import { haptic } from "@/lib/haptics";
+import { safeReplace } from "@/lib/safe-router";
 
 export default function RequestAnotherServiceScreen() {
   const router = useRouter();
   const job = useActiveJob();
-  const { locale } = useLocaleContext();
-  const isEs = locale === "es-MX";
-  const L = (en: string, es: string) => (isEs ? es : en);
+  const L = useL();
 
   return (
-    <ScreenContainer edges={["top", "left", "right", "bottom"]}>
+    <ScreenContainer edges={["left", "right", "bottom"]} showBackButton title="Request another service">
       <View style={styles.wrap}>
         <Text style={styles.title}>{L("You already have a booked service with a mechanic.", "Ya tienes un servicio agendado con un mecánico.")}</Text>
         <Text style={styles.sub}>
@@ -22,7 +21,7 @@ export default function RequestAnotherServiceScreen() {
             style={styles.link}
             onPress={() => {
               haptic.light();
-              if (job) router.push("/tracking" as any);
+              if (job) safeReplace("/tracking");
             }}
           >
             {L("here", "aquí")}
@@ -77,7 +76,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   link: {
-    color: "#2DD4BF",
+    color: "#FB923C",
     fontWeight: "800",
   },
   primaryBtn: {
