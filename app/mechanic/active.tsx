@@ -12,7 +12,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { PrimaryButton } from "@/components/primary-button";
 import { Avatar } from "@/components/avatar";
 import { LiveMap } from "@/components/live-map";
-import { interpolate, haversineMeters, metersToMiles } from "@/lib/geo";
+import { interpolate } from "@/lib/geo";
 import { useEffect, useRef, useState } from "react";
 import { haptic } from "@/lib/haptics";
 import { notifyNow } from "@/lib/notifications";
@@ -41,6 +41,8 @@ import { localizedServiceName } from "@/lib/service-i18n";
 import { formatDistanceByRegion } from "@/lib/distance";
 import { hasNoShowGracePeriodElapsed, minutesSinceNoShowReport, NO_SHOW_GRACE_PERIOD_MS } from "@/lib/no-show-core";
 import { useTapGuard } from "@/hooks/use-tap-guard";
+import { useLiveRoute } from "@/hooks/use-live-route";
+import { formatEtaMinutes } from "@/lib/route-eta-core";
 
 const FLOW: MechanicJobStatus[] = ["heading_there", "arrived", "in_progress", "completed"];
 
@@ -78,7 +80,9 @@ export default function MechanicActiveJobScreen() {
   const [afterUploadFailed, setAfterUploadFailed] = useState(false);
   const [beforeUploading, setBeforeUploading] = useState(false);
   const [afterUploading, setAfterUploading] = useState(false);
-  const [mechanicLiveCoords, setMechanicLiveCoords] = useState(state.userCoords ?? null);
+  // Only real fixes from the live GPS watch (never the app's saved
+  // location, which can be from another day) — the road route starts here.
+  const [mechanicLiveCoords, setMechanicLiveCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const lastVisibleJobIdRef = useRef<string | null>(null);
   // Latest fix from the live GPS watch, reused by the 2-minute heartbeat.
   const latestLiveFixRef = useRef<{ latitude: number; longitude: number; at: number } | null>(null);
@@ -87,11 +91,6 @@ export default function MechanicActiveJobScreen() {
   const tripTrackingModeRef = useRef<"background" | "foreground_only">("foreground_only");
   const cancellationAlertShownRef = useRef(false);
 
-  useEffect(() => {
-    if (state.userCoords) {
-      setMechanicLiveCoords(state.userCoords);
-    }
-  }, [state.userCoords]);
 
   if (job?.id) {
     lastVisibleJobIdRef.current = job.id;
@@ -346,6 +345,14 @@ export default function MechanicActiveJobScreen() {
     }, 1600);
     return () => clearTimeout(timer);
   }, [cancelledJob]);
+
+  // Road route + live ETA while heading to the customer (Routes API), drawn
+  // along the streets instead of a straight line.
+  const { eta: routeEta, path: routePath } = useLiveRoute(
+    mechanicLiveCoords,
+    job?.pickup ?? null,
+    job?.status === "heading_there",
+  );
 
   if (cancelledJob) {
     const promptTitle = cancelledJob.isBooked
@@ -703,7 +710,7 @@ export default function MechanicActiveJobScreen() {
   const ctaTitle = ctaLabel(job.status, isEs);
   const headline = headlineFor(job.status, job.customerName, isEs);
   const liveMechanicPoint = computeMechanicLive(job, elapsed);
-  const liveEta = estimateEtaMinutes(liveMechanicPoint, job.pickup ?? null);
+  const etaText = routeEta ? formatEtaMinutes(routeEta) : null;
   const mechanicGpsPoint = mechanicLiveCoords ?? state.userCoords ?? liveMechanicPoint;
   const mapHeight = 300;
   const currentFlowIdx = FLOW.indexOf(job.status);
@@ -1022,17 +1029,18 @@ export default function MechanicActiveJobScreen() {
             status={mapStatus(job.status)}
             pickup={job.pickup ?? null}
             mechanic={mechanicGpsPoint}
-            etaMinutes={job.status === "heading_there" ? liveEta : undefined}
             height={mapHeight}
+            routePath={job.status === "heading_there" ? routePath : null}
+            showStatusChip={false}
           />
           <View style={styles.mapOverlay}>
             <View style={styles.statusPill}>
               <IconSymbol name="bolt.fill" size={12} color="#FDBA74" />
               <Text style={styles.statusPillText}>{statusCaption}</Text>
             </View>
-            {job.status === "heading_there" ? (
+            {job.status === "heading_there" && etaText ? (
               <View style={styles.etaPill}>
-                <Text style={styles.etaPillText}>{`ETA ${liveEta} min`}</Text>
+                <Text style={styles.etaPillText}>{`ETA ${etaText}`}</Text>
               </View>
             ) : null}
           </View>
@@ -1082,7 +1090,10 @@ export default function MechanicActiveJobScreen() {
             <Text style={styles.summaryEyebrow}>{serviceLabel}</Text>
             <Text style={styles.summaryTitle}>{headline}</Text>
             <Text style={styles.summarySub}>
-              {formatDistanceByRegion(job.distanceMiles, region)} • {job.vehicle}
+              {routeEta
+                ? `${routeEta.source === "estimate" ? "~" : ""}${formatDistanceByRegion(routeEta.distanceMiles, region)} • `
+                : ""}
+              {job.vehicle}
             </Text>
           </View>
           <View style={styles.payoutChip}>
@@ -1501,16 +1512,6 @@ function computeMechanicLive(
   }
   // arrived / in_progress / completed
   return pickup;
-}
-
-function estimateEtaMinutes(
-  mechanicPoint: { latitude: number; longitude: number } | null,
-  pickupPoint: { latitude: number; longitude: number } | null,
-): number {
-  if (!mechanicPoint || !pickupPoint) return 12;
-  const miles = metersToMiles(haversineMeters(mechanicPoint, pickupPoint));
-  const effectiveMph = 24;
-  return Math.max(1, Math.ceil((miles / effectiveMph) * 60));
 }
 
 function ctaLabel(s: MechanicJobStatus, isEs: boolean): string {

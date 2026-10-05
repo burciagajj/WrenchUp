@@ -5,6 +5,9 @@ import {
   isRoutableCoords,
   parseRoutesResponse,
   ROAD_DETOUR_FACTOR,
+  decodePolyline,
+  pathLengthMiles,
+  remainingPath,
 } from "../route-eta-core";
 import { offsetMeters } from "../geo";
 
@@ -55,5 +58,40 @@ describe("isRoutableCoords", () => {
     expect(isRoutableCoords({ latitude: 0, longitude: 0 })).toBe(false);
     expect(isRoutableCoords({ latitude: "31", longitude: -106 })).toBe(false);
     expect(isRoutableCoords(null)).toBe(false);
+  });
+});
+
+describe("decodePolyline", () => {
+  it("decodes Google's reference polyline", () => {
+    const points = decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@");
+    expect(points).toHaveLength(3);
+    expect(points[0].latitude).toBeCloseTo(38.5, 5);
+    expect(points[0].longitude).toBeCloseTo(-120.2, 5);
+    expect(points[2].latitude).toBeCloseTo(43.252, 5);
+    expect(points[2].longitude).toBeCloseTo(-126.453, 5);
+  });
+
+  it("returns what it can from empty or truncated input", () => {
+    expect(decodePolyline("")).toEqual([]);
+    expect(decodePolyline("_p~iF~ps|U_ulL")).toHaveLength(1);
+  });
+});
+
+describe("remainingPath / pathLengthMiles", () => {
+  const a = origin;
+  const b = offsetMeters(origin, 0, 1609.344);
+  const c = offsetMeters(origin, 1609.344, 1609.344);
+
+  it("measures a path", () => {
+    expect(pathLengthMiles([a, b, c])).toBeCloseTo(2, 2);
+    expect(pathLengthMiles([a])).toBe(0);
+  });
+
+  it("drops the part already driven", () => {
+    const halfway = offsetMeters(origin, 0, 900);
+    const rest = remainingPath([a, b, c], halfway);
+    expect(rest[0]).toEqual(halfway);
+    expect(rest.slice(1)).toEqual([c]);
+    expect(remainingPath([], a)).toEqual([]);
   });
 });

@@ -18,6 +18,8 @@ export function LiveMap({
   nearby,
   etaMinutes,
   height = 220,
+  routePath,
+  showStatusChip = true,
 }: LiveMapProps) {
   const mapRef = useRef<MapView>(null);
   const L = useL();
@@ -27,8 +29,10 @@ export function LiveMap({
     if (pickup) pts.push(pickup);
     if (mechanic) pts.push(mechanic);
     if (nearby) for (const n of nearby) pts.push(n.coord);
+    // Fit the whole road route, which can bend well outside the two pins.
+    if (routePath) for (const p of routePath) pts.push(p);
     return pts;
-  }, [pickup, mechanic, nearby]);
+  }, [pickup, mechanic, nearby, routePath]);
 
   const region: Region | undefined = useMemo(() => {
     if (points.length === 0) return undefined;
@@ -42,6 +46,7 @@ export function LiveMap({
   }, [region]);
 
   const showRoute = !!(pickup && mechanic);
+  const hasRoadPath = !!routePath && routePath.length >= 2;
 
   return (
     <View style={[styles.container, { height }]}>
@@ -78,7 +83,11 @@ export function LiveMap({
               </View>
             </Marker>
           ) : null}
-          {showRoute ? (
+          {showRoute && hasRoadPath ? (
+            <Polyline coordinates={routePath!} strokeColor="#F97316" strokeWidth={5} lineCap="round" lineJoin="round" />
+          ) : showRoute ? (
+            // No road route available (offline / routing off): straight
+            // dashed line so it doesn't read as the actual path.
             <Polyline
               coordinates={[mechanic!, pickup!]}
               strokeColor="#F97316"
@@ -93,6 +102,7 @@ export function LiveMap({
         </View>
       )}
 
+      {showStatusChip ? (
       <View pointerEvents="none" style={styles.statusChipWrap}>
         <View style={styles.statusChip}>
           <View
@@ -107,6 +117,7 @@ export function LiveMap({
           <Text style={styles.statusText}>{statusLabel(status, etaMinutes, L)}</Text>
         </View>
       </View>
+      ) : null}
     </View>
   );
 }

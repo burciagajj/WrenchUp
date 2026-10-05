@@ -1,4 +1,6 @@
 import { ScrollView, StyleSheet, Text, View, Pressable, Alert, Platform, Linking } from "react-native";
+import { useLiveRoute } from "@/hooks/use-live-route";
+import { formatEtaMinutes } from "@/lib/route-eta-core";
 import { Image } from "expo-image";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import * as Contacts from "expo-contacts";
@@ -10,7 +12,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { useActiveJob, useStore } from "@/lib/store";
 import { getServiceType } from "@/lib/seed";
 import { LiveMap } from "@/components/live-map";
-import { interpolate, haversineMeters, metersToMiles } from "@/lib/geo";
+import { interpolate } from "@/lib/geo";
 import { Avatar } from "@/components/avatar";
 import { RatingStars } from "@/components/rating-stars";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -191,10 +193,6 @@ export default function TrackingScreen() {
     () => (job ? job.mechanicLiveCoords ?? computeMechanicLive(job, elapsedEnroute) : null),
     [job, elapsedEnroute]
   );
-  const liveEta = useMemo(
-    () => (liveMechanicPoint && job ? estimateEtaMinutes(liveMechanicPoint, job.pickup ?? null) : null),
-    [liveMechanicPoint, job]
-  );
   // Deliberately NOT memoized on a fixed dependency list — this needs to flip to
   // stale purely from time passing, with no new data arriving. It's cheap, and
   // the screen already re-renders every 2-5s from the background poll/realtime
@@ -202,7 +200,15 @@ export default function TrackingScreen() {
   const isRealMechanicLocation = !!job?.mechanicLiveCoords;
   const mechanicLocationStale =
     isRealMechanicLocation && isMechanicLocationStale(job?.mechanicLocationUpdatedAt ?? null);
-  const displayEta = mechanicLocationStale ? null : liveEta;
+  // Real road route + ETA from the mechanic's actual reported GPS (Routes
+  // API), drawn along the streets. No real, fresh location = no ETA, rather
+  // than one computed from the simulated puck.
+  const { eta: routeEta, path: routePath } = useLiveRoute(
+    isRealMechanicLocation && !mechanicLocationStale ? job?.mechanicLiveCoords ?? null : null,
+    job?.pickup ?? null,
+    job?.status === "accepted" || job?.status === "enroute",
+  );
+  const displayEta = routeEta ? routeEta.durationMinutes : null;
 
   const handleCall = useCallback(() => {
     haptic.light();
@@ -568,6 +574,7 @@ export default function TrackingScreen() {
             pickup={job.pickup ?? null}
             mechanic={liveMechanicPoint}
             etaMinutes={job.status === "accepted" || job.status === "enroute" ? displayEta ?? undefined : undefined}
+            routePath={job.status === "accepted" || job.status === "enroute" ? routePath : null}
           />
         </View>
 
@@ -586,7 +593,7 @@ export default function TrackingScreen() {
             ) : (
               displayEta ? (
                 <View style={{ marginTop: 8, alignSelf: "flex-start", backgroundColor: "rgba(20,184,166,0.18)", borderWidth: 1, borderColor: "rgba(94,234,212,0.5)", paddingHorizontal: 9, paddingVertical: 3, borderRadius: 7 }}>
-                  <Text style={{ color: "#FFEDD5", fontSize: 11, fontWeight: "800" }}>{L("LIVE ETA", "ETA EN VIVO")}: ~{displayEta} min</Text>
+                  <Text style={{ color: "#FFEDD5", fontSize: 11, fontWeight: "800" }}>{L("LIVE ETA", "ETA EN VIVO")}: {formatEtaMinutes(routeEta)}</Text>
                 </View>
               ) : null
             ))}
@@ -852,17 +859,6 @@ function computeMechanicLive(job: { pickup?: { latitude: number; longitude: numb
   }
   // arrived / in_progress / completed
   return pickup;
-}
-
-function estimateEtaMinutes(
-  mechanicPoint: { latitude: number; longitude: number } | null,
-  pickupPoint: { latitude: number; longitude: number } | null,
-): number {
-  if (!mechanicPoint || !pickupPoint) return 12;
-  const miles = metersToMiles(haversineMeters(mechanicPoint, pickupPoint));
-  const effectiveMph = 24; // urban avg for roadside dispatch
-  const eta = Math.ceil((miles / effectiveMph) * 60);
-  return Math.max(1, eta);
 }
 
 function customerStatusCopy(status: JobStatus, isEs: boolean): { label: string; desc: string } {

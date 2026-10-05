@@ -22,4 +22,11 @@ export interface LiveMapProps {
   etaMinutes?: number;
   /** Height in pixels (default 220). */
   height?: number;
+  /**
+   * Road path from the mechanic to the pickup (Routes API). When present the
+   * route is drawn along the streets; otherwise a dashed straight line.
+   */
+  routePath?: LatLng[] | null;
+  /** Hide the built-in status chip when the screen draws its own (default shown). */
+  showStatusChip?: boolean;
 }

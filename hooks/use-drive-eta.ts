@@ -1,34 +1,8 @@
 import { useEffect, useState } from "react";
-import { getApiUrl } from "@/lib/api-base-url";
-import { getSessionToken } from "@/lib/session-tokens";
+import { fetchRouteEta } from "@/lib/route-eta";
 import { getFreshDeviceCoords } from "@/lib/service-location";
 import { estimateDriveEta, isRoutableCoords, type DriveEta } from "@/lib/route-eta-core";
 import type { LatLng } from "@/lib/types";
-
-const ROUTE_TIMEOUT_MS = 8000;
-
-async function fetchRouteEta(origin: LatLng, destination: LatLng): Promise<DriveEta | null> {
-  const token = await getSessionToken().catch(() => null);
-  if (!token) return null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ROUTE_TIMEOUT_MS);
-  try {
-    const res = await fetch(getApiUrl("/api/route-eta"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ origin, destination }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const data = (await res.json().catch(() => null)) as { distanceMiles?: number; durationMinutes?: number } | null;
-    if (typeof data?.distanceMiles !== "number" || typeof data?.durationMinutes !== "number") return null;
-    return { distanceMiles: data.distanceMiles, durationMinutes: data.durationMinutes, source: "route" };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 /**
  * Driving distance + ETA from the mechanic's current position to a pickup.

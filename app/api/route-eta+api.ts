@@ -25,6 +25,8 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null);
     const origin = body?.origin;
     const destination = body?.destination;
+    // The road path (for drawing the route on a map) is only fetched when asked.
+    const includePath = body?.includePath === true;
     if (!isRoutableCoords(origin) || !isRoutableCoords(destination)) {
       return Response.json({ error: "origin and destination coordinates are required" }, { status: 400 });
     }
@@ -54,7 +56,9 @@ export async function POST(request: Request) {
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+        "X-Goog-FieldMask": includePath
+          ? "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline"
+          : "routes.distanceMeters,routes.duration",
       },
       body: JSON.stringify({
         origin: { location: { latLng: origin } },
