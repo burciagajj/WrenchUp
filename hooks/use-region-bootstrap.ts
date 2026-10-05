@@ -52,10 +52,10 @@ export function useRegionBootstrap(options: Options = {}) {
   useEffect(() => {
     if (!state.hydrated) return;
     if (!eager) return;
+    // Refresh once per app launch even when a location is already saved:
+    // userCoords is persisted, and skipping the refresh left it at wherever
+    // the phone was the first time the app was ever opened.
     if (locationStarted.current || isLocationDetectionInFlight()) return;
-    if (state.locationStatus === "granted" && state.userCoords && state.detectedCountry) {
-      return;
-    }
 
     locationStarted.current = true;
 

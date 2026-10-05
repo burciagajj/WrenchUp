@@ -26,6 +26,8 @@ import { verifyPaymentBeforeDispatch } from "@/lib/payment-verification";
 import { formatDistanceByRegion } from "@/lib/distance";
 import { buildVehicleLabel } from "@/lib/vehicle-label";
 import { resolveServiceLocationLabel } from "@/lib/location-label";
+import { getFreshDeviceCoords } from "@/lib/service-location";
+import { chooseRequestLocation } from "@/lib/service-location-core";
 import { supabaseUserData } from "@/lib/_core/supabase-user-data";
 import { shouldUseMockPayments } from "@/lib/mock-payments";
 import { formatEditableMoney, parseEditableMoneyInput, normalizeEditableMoneyInput } from "@/lib/money-input";
@@ -139,14 +141,28 @@ export default function ConfirmScreen() {
     }
     try {
       setPaymentError(null);
-      if (!state.userCoords || state.locationStatus !== "granted") {
+      // Resolve where to send the mechanic before anything is charged: a
+      // chosen address, else a GPS fix taken now. The persisted userCoords
+      // alone can be from whenever the app was first opened.
+      const freshGps = state.serviceLocationCoords ? null : await getFreshDeviceCoords();
+      const requestLocation = chooseRequestLocation({
+        chosenAddressCoords: state.serviceLocationCoords,
+        freshGps,
+        cachedGps: state.userCoords,
+        cachedGpsAt: state.userCoordsAt,
+        now: Date.now(),
+      });
+      if (!requestLocation) {
         haptic.error();
         setPaymentError(
           isSpanish
-            ? "Permite el acceso a la ubicación para enviar al mecánico a tu ubicación actual real."
-            : "Allow location access so we can send the mechanic to your actual current location."
+            ? "No pudimos obtener tu ubicación actual. Activa la ubicación o elige tu dirección con \"Cambiar\" en la pantalla de inicio."
+            : "We couldn't get your current location. Turn on location, or set your address with \"Change\" on the home screen."
         );
         return;
+      }
+      if (requestLocation.source === "gps") {
+        dispatch({ type: "SET_USER_COORDS", payload: { coords: requestLocation.coords, status: "granted" } });
       }
 
       // More authentication: biometric step-up before charging/creating paid service request (protects customer)
@@ -254,7 +270,7 @@ export default function ConfirmScreen() {
       }
 
       haptic.success();
-      const pickup = state.userCoords;
+      const pickup = requestLocation.coords;
       const serviceLocationLabel = resolveServiceLocationLabel(state.defaultLocation, pickup);
       const start = mechanicCoords(pricingMechanic, pickup);
       // Store the same real, currency-converted amount that was actually

@@ -35,6 +35,9 @@ import { AuthenticatedDrawer } from "@/components/authenticated-drawer";
 import { SchemeColors } from "@/constants/theme";
 import { buildChatNotificationRoute } from "@/lib/chat-notifications";
 import { isNativePushAvailable, subscribeNotificationResponses } from "@/lib/notifications";
+// Registers the background trip-location task; must load at app start so
+// the OS can wake it while the app is closed.
+import "@/lib/mechanic-trip-tracking";
 
 // Keep the native splash screen (logo) visible via preventAutoHideAsync until
 // AppBootstrapGate is ready. We hide it only after hydration+auth+data (or force).

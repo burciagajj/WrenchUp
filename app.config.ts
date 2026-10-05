@@ -111,6 +111,13 @@ const config: ExpoConfig = {
       "expo-location",
       {
         locationWhenInUsePermission: "Allow $(PRODUCT_NAME) to show your service location and route mechanics to you.",
+        // Mechanics only: trip GPS keeps running while they navigate in another
+        // app during an active job (lib/mechanic-trip-tracking.ts).
+        locationAlwaysAndWhenInUsePermission:
+          "Allow $(PRODUCT_NAME) to share your location with the customer during an active job, even when the app is in the background.",
+        isAndroidBackgroundLocationEnabled: true,
+        isAndroidForegroundServiceEnabled: true,
+        isIosBackgroundLocationEnabled: true,
       },
     ],
     [

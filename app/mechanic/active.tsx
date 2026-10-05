@@ -19,7 +19,14 @@ import { notifyNow } from "@/lib/notifications";
 import type { MechanicJobStatus } from "@/lib/types";
 import { useAuth } from "@/lib/auth-context";
 import { resolveAuthSession } from "@/lib/resolve-auth-session";
-import { fetchDispatchRequest, releaseDispatchFromMechanic, updateDispatchStatus, isNetworkUnavailableError, proposePartsCost } from "@/lib/live-dispatch";
+import { fetchDispatchRequest, releaseDispatchFromMechanic, updateDispatchStatus, updateMechanicLocation, isNetworkUnavailableError, proposePartsCost } from "@/lib/live-dispatch";
+import {
+  recordBackgroundLocationDeclined,
+  requestBackgroundLocationPermission,
+  shouldOfferBackgroundLocation,
+  startMechanicTripTracking,
+  stopMechanicTripTracking,
+} from "@/lib/mechanic-trip-tracking";
 import { uploadMechanicDoc } from "@/lib/upload-mechanic-doc";
 import { isPartsCostWithinBounds, maxPartsCostForRegion } from "@/lib/price-adjustment-core";
 import { formatEditableMoney, normalizeEditableMoneyInput, parseEditableMoneyInput } from "@/lib/money-input";
@@ -75,6 +82,9 @@ export default function MechanicActiveJobScreen() {
   const lastVisibleJobIdRef = useRef<string | null>(null);
   // Latest fix from the live GPS watch, reused by the 2-minute heartbeat.
   const latestLiveFixRef = useRef<{ latitude: number; longitude: number; at: number } | null>(null);
+  // "background" while the OS trip task (lib/mechanic-trip-tracking.ts) is
+  // sending fixes; the screen's own watch then only drives the map.
+  const tripTrackingModeRef = useRef<"background" | "foreground_only">("foreground_only");
   const cancellationAlertShownRef = useRef(false);
 
   useEffect(() => {
@@ -109,15 +119,7 @@ export default function MechanicActiveJobScreen() {
         }
         const resolved = await resolveAuthSession(user);
         if (!resolved || !alive) return;
-        await updateDispatchStatus(
-          resolved.sessionToken,
-          job.remoteRequestId!,
-          mapDispatchStatus(job.status),
-          {
-            mechanicLatitude: fix.latitude,
-            mechanicLongitude: fix.longitude,
-          }
-        );
+        await updateMechanicLocation(resolved.sessionToken, job.remoteRequestId!, user.id, fix);
       } catch (error) {
         console.error("[MechanicActive] GPS sync failed:", error);
       }
@@ -204,6 +206,58 @@ export default function MechanicActiveJobScreen() {
     };
   }, [L, dispatch, job?.id, job?.remoteRequestId, job?.status, user]);
 
+  // Background trip tracking: keeps sending GPS while the mechanic navigates
+  // in another app or locks the phone. Google Play requires this in-app
+  // disclosure before the "Allow all the time" permission prompt.
+  const tripActive =
+    !!job?.remoteRequestId &&
+    (job.status === "heading_there" || job.status === "arrived" || job.status === "in_progress");
+  useEffect(() => {
+    if (!tripActive || !job?.remoteRequestId || !user?.id) return;
+    let alive = true;
+    const requestId = job.remoteRequestId;
+    const mechanicUserId = user.id;
+    (async () => {
+      if (await shouldOfferBackgroundLocation()) {
+        const accepted = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            L("Share your location during trips", "Comparte tu ubicación durante los viajes"),
+            L(
+              "WrenchUp collects your location while you're on an active job, even when the app is closed or not in use, so the customer can see you arriving and your trip distance is recorded accurately (it decides cancellation fees paid to you). Tracking stops as soon as the job ends.\n\nOn the next screen, choose \"Allow all the time\".",
+              "WrenchUp recopila tu ubicación mientras tienes un trabajo activo, incluso cuando la app está cerrada o no se está usando, para que el cliente vea que vas en camino y tu distancia recorrida se registre correctamente (determina las tarifas de cancelación que se te pagan). El seguimiento termina en cuanto finaliza el trabajo.\n\nEn la siguiente pantalla, elige \"Permitir todo el tiempo\".",
+            ),
+            [
+              { text: L("Not now", "Ahora no"), style: "cancel", onPress: () => resolve(false) },
+              { text: L("Continue", "Continuar"), onPress: () => resolve(true) },
+            ],
+            { cancelable: false },
+          );
+        });
+        if (accepted) {
+          await requestBackgroundLocationPermission();
+        } else {
+          await recordBackgroundLocationDeclined();
+        }
+      }
+      const mode = await startMechanicTripTracking(requestId, mechanicUserId);
+      if (alive) tripTrackingModeRef.current = mode;
+    })().catch((error) => console.warn("[MechanicActive] Trip tracking start failed:", error));
+    return () => {
+      alive = false;
+    };
+    // L is stable per locale; re-running on it would re-prompt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripActive, job?.remoteRequestId, user?.id]);
+
+  // Stop when the trip ends here. (If this screen is gone by then, the task
+  // stops itself once the server stops matching the job as active.)
+  const jobFinished = !!job && (job.status === "completed" || job.status === "cancelled" || job.status === "declined");
+  useEffect(() => {
+    if (!jobFinished) return;
+    tripTrackingModeRef.current = "foreground_only";
+    void stopMechanicTripTracking();
+  }, [jobFinished]);
+
   // Keep the route map and customer sync moving with actual GPS while the mechanic is driving.
   useEffect(() => {
     if (!job?.remoteRequestId || !user?.id) return;
@@ -233,21 +287,16 @@ export default function MechanicActiveJobScreen() {
             };
             latestLiveFixRef.current = { ...next, at: Date.now() };
             setMechanicLiveCoords(next);
+            // The background trip task already sends fixes; sending them
+            // twice would only add noise to the distance log.
+            if (tripTrackingModeRef.current === "background") return;
             try {
               const resolved = await resolveAuthSession(user);
               if (!resolved || cancelled) return;
-              await updateDispatchStatus(
-                resolved.sessionToken,
-                job.remoteRequestId!,
-                mapDispatchStatus(job.status),
-                {
-                  mechanicLatitude: next.latitude,
-                  mechanicLongitude: next.longitude,
-                }
-              );
-        } catch (_error) {
-          console.error("[MechanicActive] Live GPS sync failed:", _error);
-        }
+              await updateMechanicLocation(resolved.sessionToken, job.remoteRequestId!, user.id, next);
+            } catch (_error) {
+              console.error("[MechanicActive] Live GPS sync failed:", _error);
+            }
           }
         );
       } catch (_error) {

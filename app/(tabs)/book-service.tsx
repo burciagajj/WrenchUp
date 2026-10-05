@@ -40,6 +40,8 @@ import type { Region } from "react-native-maps";
 import { ServiceMapHero } from "@/components/service-map-hero";
 import { LocationAutocompleteInput } from "@/components/location-autocomplete-input";
 import { regionFor } from "@/lib/geo";
+import { geocodeServiceAddress, getFreshDeviceCoords } from "@/lib/service-location";
+import { chooseRequestLocation, isDifferentAddress } from "@/lib/service-location-core";
 import { supabaseUserData } from "@/lib/_core/supabase-user-data";
 import { QUICK_SERVICE_BOOKING_FEE_RATE } from "@/lib/fare";
 import { CANCELLATION_FEE_USD } from "@/lib/cancellation-fee-core";
@@ -298,17 +300,6 @@ export default function BookServiceTabScreen() {
       );
       return;
     }
-    if (!state.userCoords || state.locationStatus !== "granted") {
-      haptic.error();
-      Alert.alert(
-        L("Location required", "Se requiere ubicación"),
-        L(
-          "Allow location access so we can send the mechanic to your actual current location.",
-          "Permite el acceso a la ubicación para enviar al mecánico a tu ubicación actual real."
-        )
-      );
-      return;
-    }
     if (isScheduledTimeTooSoon(scheduledFor.getTime())) {
       haptic.error();
       Alert.alert(
@@ -325,6 +316,55 @@ export default function BookServiceTabScreen() {
     setSubmitting(true);
     dispatch({ type: "SET_PAYMENT_STATUS", payload: { status: "processing" } });
     try {
+      // Where the mechanic goes, resolved before anything is charged. A
+      // typed address is geocoded (it used to be saved only as a label while
+      // the coordinates stayed at the phone's old GPS position); otherwise
+      // a chosen address or a GPS fix taken now.
+      const typedAddress = location.trim();
+      let requestLocation: { coords: { latitude: number; longitude: number } } | null = null;
+      if (typedAddress && isDifferentAddress(typedAddress, state.defaultLocation)) {
+        const coords = await geocodeServiceAddress(typedAddress);
+        if (!coords) {
+          haptic.error();
+          dispatch({ type: "SET_PAYMENT_STATUS", payload: { status: "idle" } });
+          Alert.alert(
+            L("Address not found", "Dirección no encontrada"),
+            L(
+              "We couldn't find that address. Check it, or pick one from the suggestions.",
+              "No pudimos encontrar esa dirección. Revísala o elige una de las sugerencias.",
+            ),
+          );
+          return;
+        }
+        requestLocation = { coords };
+      } else {
+        const freshGps = state.serviceLocationCoords ? null : await getFreshDeviceCoords();
+        const chosen = chooseRequestLocation({
+          chosenAddressCoords: state.serviceLocationCoords,
+          freshGps,
+          cachedGps: state.userCoords,
+          cachedGpsAt: state.userCoordsAt,
+          now: Date.now(),
+        });
+        if (chosen?.source === "gps") {
+          dispatch({ type: "SET_USER_COORDS", payload: { coords: chosen.coords, status: "granted" } });
+        }
+        requestLocation = chosen;
+      }
+      if (!requestLocation) {
+        haptic.error();
+        dispatch({ type: "SET_PAYMENT_STATUS", payload: { status: "idle" } });
+        Alert.alert(
+          L("Location required", "Se requiere ubicación"),
+          L(
+            "We couldn't get your current location. Turn on location, or type the service address.",
+            "No pudimos obtener tu ubicación actual. Activa la ubicación o escribe la dirección del servicio.",
+          ),
+        );
+        return;
+      }
+      const serviceCoords = requestLocation.coords;
+
       // Biometric step-up before authorizing a charge, matching confirm.tsx's
       // protection for the quick-service flow.
       try {
@@ -429,8 +469,8 @@ export default function BookServiceTabScreen() {
         serviceCode: selectedService.code,
         vehicleLabel,
         locationLabel: location.trim(),
-        customerLatitude: state.userCoords.latitude,
-        customerLongitude: state.userCoords.longitude,
+        customerLatitude: serviceCoords.latitude,
+        customerLongitude: serviceCoords.longitude,
         offeredPrice: chargeableEstimatedTodayTotal,
         oilPackage:
           selectedService.code === "oil_change"
@@ -485,7 +525,7 @@ export default function BookServiceTabScreen() {
           total: estimatedTodayTotal,
         },
         stripePaymentIntentId: result.paymentIntentId,
-        pickup: state.userCoords,
+        pickup: serviceCoords,
         paymentMethodId: methodId,
       };
       dispatch({ type: "CREATE_JOB", payload: job });

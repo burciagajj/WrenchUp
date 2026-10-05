@@ -220,6 +220,13 @@ export type AppState = {
   phoneNumber: string | null;
   defaultLocation: string;
   userCoords: LatLng | null;
+  /** When userCoords was last read from GPS (ms epoch). */
+  userCoordsAt: number | null;
+  /**
+   * Coordinates of an address the customer chose with "Change" (geocoded).
+   * When set, requests go there instead of the phone's GPS position.
+   */
+  serviceLocationCoords: LatLng | null;
   locationStatus: "idle" | "requesting" | "granted" | "denied";
   vehicles: Vehicle[];
   selectedVehicleId: string | null;

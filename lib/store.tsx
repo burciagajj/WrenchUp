@@ -20,6 +20,8 @@ const PERSISTABLE_KEYS: (keyof AppState)[] = [
   "phoneNumber",
   "defaultLocation",
   "userCoords",
+  "userCoordsAt",
+  "serviceLocationCoords",
   "locationStatus",
   "vehicles",
   "selectedVehicleId",

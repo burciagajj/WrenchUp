@@ -11,6 +11,7 @@ import {
   TextInput,
   Platform,
   KeyboardAvoidingView,
+  Alert,
 } from "react-native";
 import { useRouter, useSegments } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
@@ -21,7 +22,8 @@ import { haptic } from "@/lib/haptics";
 import { useAuth } from "@/lib/auth-context";
 import { getServiceType } from "@/lib/seed";
 import { fetchLocationAndAddress } from "@/lib/location";
-import { resolveServiceLocationLabel } from "@/lib/location-label";
+import { CURRENT_LOCATION_LABEL, resolveServiceLocationLabel } from "@/lib/location-label";
+import { geocodeServiceAddress } from "@/lib/service-location";
 import { MechanicHome } from "@/components/mechanic-home";
 import { useAppDrawer } from "@/lib/app-drawer-context";
 import { useLocaleContext, useL } from "@/hooks/use-locale";
@@ -83,6 +85,7 @@ export default function HomeScreen() {
   const [showLocationEdit, setShowLocationEdit] = useState(false);
   const [editLocationText, setEditLocationText] = useState(state.defaultLocation || "");
   const [locationRefreshing, setLocationRefreshing] = useState(false);
+  const [savingLocation, setSavingLocation] = useState(false);
   const activeRole = state.dashboardRoleOverride ?? state.role;
   const isInTabsShell = segments.includes("(tabs)");
   const bottomNavLabels = useMemo(
@@ -211,6 +214,11 @@ export default function HomeScreen() {
     try {
       const result = await fetchLocationAndAddress();
       if (result.status === "granted" && result.coords) {
+        // Refresh = "use where I am now": drop any address chosen with Change.
+        dispatch({
+          type: "SET_SERVICE_LOCATION",
+          payload: { label: result.address?.trim() || CURRENT_LOCATION_LABEL, coords: null },
+        });
         dispatch({
           type: "SET_USER_COORDS",
           payload: {
@@ -466,16 +474,39 @@ export default function HomeScreen() {
                   <Text style={{ color: "#CBD5E1", fontWeight: "700" }}>{L("Cancel", "Cancelar")}</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => {
-                    if (editLocationText.trim()) {
-                      dispatch({ type: "SET_DEFAULT_LOCATION", payload: editLocationText.trim() });
-                      haptic.success();
+                  disabled={savingLocation}
+                  onPress={async () => {
+                    const address = editLocationText.trim();
+                    if (!address) {
+                      setShowLocationEdit(false);
+                      return;
                     }
+                    // Look up real coordinates: the mechanic is routed by
+                    // coordinates, so saving only the text sent them to the
+                    // phone's old GPS spot instead of this address.
+                    setSavingLocation(true);
+                    const coords = await geocodeServiceAddress(address);
+                    setSavingLocation(false);
+                    if (!coords) {
+                      haptic.error();
+                      Alert.alert(
+                        L("Address not found", "Dirección no encontrada"),
+                        L(
+                          "We couldn't find that address. Check it, or pick one from the suggestions.",
+                          "No pudimos encontrar esa dirección. Revísala o elige una de las sugerencias.",
+                        ),
+                      );
+                      return;
+                    }
+                    dispatch({ type: "SET_SERVICE_LOCATION", payload: { label: address, coords } });
+                    haptic.success();
                     setShowLocationEdit(false);
                   }}
                   style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: "#F97316", alignItems: "center" }}
                 >
-                  <Text style={{ color: "#FFFFFF", fontWeight: "800" }}>{L("Save", "Guardar")}</Text>
+                  <Text style={{ color: "#FFFFFF", fontWeight: "800" }}>
+                    {savingLocation ? L("Finding address…", "Buscando dirección…") : L("Save", "Guardar")}
+                  </Text>
                 </Pressable>
               </View>
             </View>

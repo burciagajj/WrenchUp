@@ -20,6 +20,8 @@ export const initialState: AppState = {
   phoneNumber: null,
   defaultLocation: DEFAULT_LOCATION,
   userCoords: null,
+  userCoordsAt: null,
+  serviceLocationCoords: null,
   locationStatus: "idle",
   vehicles: DEFAULT_VEHICLES,
   selectedVehicleId: DEFAULT_VEHICLES[0]?.id ?? null,
@@ -46,6 +48,8 @@ export type Action =
   | { type: "HYDRATE"; payload: Partial<AppState> }
   | { type: "SET_USER_NAME"; payload: string }
   | { type: "SET_DEFAULT_LOCATION"; payload: string }
+  /** Customer-chosen service address. coords null = back to "use my GPS location". */
+  | { type: "SET_SERVICE_LOCATION"; payload: { label: string; coords: { latitude: number; longitude: number } | null } }
   | { type: "SET_USER_COORDS"; payload: { coords: { latitude: number; longitude: number } | null; status: AppState["locationStatus"]; address?: string } }
   | { type: "ADD_VEHICLE"; payload: Vehicle }
   | { type: "UPDATE_VEHICLE"; payload: Vehicle }
@@ -192,17 +196,26 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, userName: action.payload };
     case "SET_DEFAULT_LOCATION":
       return { ...state, defaultLocation: action.payload };
-    case "SET_USER_COORDS":
+    case "SET_SERVICE_LOCATION":
+      return {
+        ...state,
+        defaultLocation: action.payload.label,
+        serviceLocationCoords: action.payload.coords,
+      };
+    case "SET_USER_COORDS": {
+      const freshFix = action.payload.status === "granted" && !!action.payload.coords;
       return {
         ...state,
         userCoords: action.payload.coords,
+        userCoordsAt: freshFix ? Date.now() : state.userCoordsAt,
         locationStatus: action.payload.status,
-        defaultLocation: resolveServiceLocationLabel(
-          state.defaultLocation,
-          action.payload.coords,
-          action.payload.address
-        ),
+        // A chosen address keeps its label; a GPS refresh only moves the
+        // phone's own position.
+        defaultLocation: state.serviceLocationCoords
+          ? state.defaultLocation
+          : resolveServiceLocationLabel(state.defaultLocation, action.payload.coords, action.payload.address),
       };
+    }
     case "ADD_VEHICLE": {
       const vehicles = [...state.vehicles, action.payload];
       const selectedVehicleId = state.selectedVehicleId ?? action.payload.id;

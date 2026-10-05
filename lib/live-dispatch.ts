@@ -1348,6 +1348,40 @@ export type DispatchStatusSyncResult = {
   droppedFields: string[];
 };
 
+/** Statuses during which the assigned mechanic's GPS is tracked. */
+export const MECHANIC_TRACKED_STATUSES = ["enroute", "arrived", "in_progress"] as const;
+
+/**
+ * Location-only update for the assigned mechanic's live GPS. Unlike
+ * updateDispatchStatus it never writes `status`, and the PATCH only matches
+ * while the job is still active and assigned to this mechanic — so a late or
+ * background fix can't reopen a job the customer just cancelled, or keep
+ * adding driven distance after it ended.
+ *
+ * Returns `active: false` when no row matched (job finished, cancelled, or
+ * reassigned): the caller should stop tracking. Network errors throw.
+ */
+export async function updateMechanicLocation(
+  token: string,
+  requestId: string,
+  mechanicUserId: string,
+  coords: { latitude: number; longitude: number },
+): Promise<{ active: boolean }> {
+  const nowIso = new Date().toISOString();
+  const rows = await api(
+    `/service_requests?id=eq.${encodeURIComponent(requestId)}&assigned_mechanic_user_id=eq.${encodeURIComponent(mechanicUserId)}&status=in.(${MECHANIC_TRACKED_STATUSES.join(",")})&select=id`,
+    token,
+    "PATCH",
+    {
+      mechanic_latitude: coords.latitude,
+      mechanic_longitude: coords.longitude,
+      mechanic_location_updated_at: nowIso,
+      updated_at: nowIso,
+    },
+  );
+  return { active: Array.isArray(rows) ? rows.length > 0 : !!rows };
+}
+
 function warnDegradedStatusSync(requestId: string, status: DispatchStatus, droppedFields: string[]): void {
   if (droppedFields.length === 0) return;
   console.warn(
