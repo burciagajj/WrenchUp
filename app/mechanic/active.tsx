@@ -73,6 +73,8 @@ export default function MechanicActiveJobScreen() {
   const [afterUploading, setAfterUploading] = useState(false);
   const [mechanicLiveCoords, setMechanicLiveCoords] = useState(state.userCoords ?? null);
   const lastVisibleJobIdRef = useRef<string | null>(null);
+  // Latest fix from the live GPS watch, reused by the 2-minute heartbeat.
+  const latestLiveFixRef = useRef<{ latitude: number; longitude: number; at: number } | null>(null);
   const cancellationAlertShownRef = useRef(false);
 
   useEffect(() => {
@@ -85,14 +87,26 @@ export default function MechanicActiveJobScreen() {
     lastVisibleJobIdRef.current = job.id;
   }
 
-  // Push mechanic GPS to service request every 2 minutes so customer mini-map stays updated.
+  // Push mechanic GPS to service request every 2 minutes so customer mini-map
+  // stays updated even while the mechanic is stopped (the live watch below
+  // only fires on movement). Must send a real, current fix: state.userCoords
+  // is captured once at app launch, and re-sending it every 2 minutes made the
+  // database count phantom trips back to that old point (driven-distance /
+  // cancellation-fee inflation).
   useEffect(() => {
     if (!job?.remoteRequestId || !user?.id) return;
     if (job.status !== "heading_there" && job.status !== "arrived" && job.status !== "in_progress") return;
     let alive = true;
     const sync = async () => {
-      if (!state.userCoords) return;
       try {
+        let fix = latestLiveFixRef.current;
+        if (!fix || Date.now() - fix.at > 60000) {
+          const perm = await Location.getForegroundPermissionsAsync();
+          if (perm.status !== "granted") return;
+          const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+          fix = { latitude: current.coords.latitude, longitude: current.coords.longitude, at: Date.now() };
+          latestLiveFixRef.current = fix;
+        }
         const resolved = await resolveAuthSession(user);
         if (!resolved || !alive) return;
         await updateDispatchStatus(
@@ -100,8 +114,8 @@ export default function MechanicActiveJobScreen() {
           job.remoteRequestId!,
           mapDispatchStatus(job.status),
           {
-            mechanicLatitude: state.userCoords.latitude,
-            mechanicLongitude: state.userCoords.longitude,
+            mechanicLatitude: fix.latitude,
+            mechanicLongitude: fix.longitude,
           }
         );
       } catch (error) {
@@ -114,7 +128,7 @@ export default function MechanicActiveJobScreen() {
       alive = false;
       clearInterval(timer);
     };
-  }, [job?.id, job?.remoteRequestId, job?.status, user, state.userCoords]);
+  }, [job?.id, job?.remoteRequestId, job?.status, user]);
 
   // If the customer cancels while we're on the live status screen, poll the request directly
   // so we can exit immediately even if a realtime payload is missed or filtered.
@@ -217,6 +231,7 @@ export default function MechanicActiveJobScreen() {
               latitude: location.coords.latitude,
               longitude: location.coords.longitude,
             };
+            latestLiveFixRef.current = { ...next, at: Date.now() };
             setMechanicLiveCoords(next);
             try {
               const resolved = await resolveAuthSession(user);
