@@ -1,15 +1,14 @@
 # WrenchUp — App Status
 
-_Last updated: October 5, 2026_
+_Last updated: October 5, 2026 (evening)_
 
 WrenchUp is an on-demand mobile mechanic app (like Uber for car repair) for the US and Mexico. Customers request help; verified mechanics drive to them and are paid through Stripe.
 
 **Snapshot**
-- Latest build: Android **build 31** (production, Oct 3). There are no iOS builds yet.
-- Backend: live at `https://wrenchup.expo.app`, last deployed Oct 4 with the cancellation-fee sweep.
-- Database: migrations 001–053 and 055 are live. **054 (chat filter) and 056 (security hardening) are written but not applied yet.**
-- Tests: 216 pass (1 skipped). `pnpm check` is clean.
-- Git: everything is committed locally; not pushed yet.
+- Latest build: Android **build 32** (Oct 4; not on Play yet). The next build will include the location overhaul and the Mexico Stripe fix.
+- Backend: live at `https://wrenchup.expo.app` (deployed Oct 4). **The Mexico Stripe fix is committed but not deployed.**
+- Database: migrations 001–057 are all live.
+- Tests: 233 pass (1 skipped). `pnpm check` is clean; `pnpm lint` has 0 errors.
 
 ---
 
@@ -78,31 +77,31 @@ WrenchUp is an on-demand mobile mechanic app (like Uber for car repair) for the 
 ## 3. What needs to be worked on
 
 ### Done (Oct 4–5)
-- All work committed; local secrets backups are git-ignored.
-- TypeScript errors fixed.
-- Live-only database changes saved as migrations 048–053.
-- Booking screen and Terms now describe the real $5 distance-based fee (the old $19 and $50 no-show text is gone).
-- Fee decisions are logged in the payment sweep.
-- **Distance tracking bug fixed:** the app re-sent its launch-time location every 2 minutes, which could double the recorded miles and wrongly trigger the fee. Fixed in the database (055, live) and in the app (next build). Every GPS update is now logged in `mechanic_location_events`.
-- Quick services restored on the "Request a mechanic" screen (next build).
+- **Chat** hides phone numbers, emails and payment apps (054, live). Push notifications are filtered the same way.
+- **Security hardening** from the Supabase advisor (056, live).
+- **Cancellation fee** tested with a real card: the long drive charged $5, the short drive charged nothing.
+- **Location overhaul** (057 live; app changes in the next build). Details in [docs/LOCATION_TRACKING.md](docs/LOCATION_TRACKING.md):
+  - background trip GPS for mechanics;
+  - fresh customer location, so requests no longer use the first-launch location;
+  - typed addresses are geocoded;
+  - finished jobs can't be reopened;
+  - start-point restart.
+- **Mexico mechanics** get Mexican Stripe accounts (code ready; needs a deploy and a build).
+- **Privacy policy** covers mechanics' background location.
 
-### In progress
-1. **Cancellation fee test with a real card** (Johan): one long drive (expect $5) and one short drive (expect no fee).
+### Needs Johan
+1. **Play Console declarations for background location:** location permissions and foreground service, with a short video. Without them Google rejects the next build. Steps and suggested text are in [docs/LOCATION_TRACKING.md](docs/LOCATION_TRACKING.md).
+2. **Stripe:**
+   - finish the platform questionnaire;
+   - refund **$15.86** on Thursday's $30.86 test payment (an older server version captured the whole hold).
+3. **Supabase:** turn on leaked-password protection (Authentication → Settings).
+4. **Play uploads:** upload build 32 by hand, or set up a Google service account key so builds can be submitted automatically.
+5. **Screenshots** of other issues to fix before the next build.
 
-### Waiting for approval
-2. **Apply migration 054:** hides phone numbers, emails and payment apps in chat. The Terms already promise this.
-3. **Apply migration 056:** security hardening from the Supabase advisor (signed-out users can't call internal database functions).
-4. **`eas deploy`:** chat notification privacy fix and fee logging.
-5. **New build:** GPS fix, chat note, fee wording, Quick services.
-6. **Push to GitHub.**
+### Before launching in Mexico
+- Mechanic payouts are sent in the job's currency (MXN). A US Stripe platform probably has to send cross-border payouts in USD. Needs a Stripe test-mode check and likely a code change.
 
-### Needs Johan (dashboard / account)
-7. **Stripe platform questionnaire:** mechanics can't receive payouts until it's done; transfers keep retrying.
-8. **Turn on leaked-password protection:** Supabase Dashboard → Authentication → Settings (blocks passwords known from data breaches).
-
-### Next improvements (need a decision)
-- **Background location for mechanics:** distance stops counting when the mechanic leaves the app or locks the screen, so a cancel at that moment may not charge the fee. Needs "Always" location permission, an Android foreground service and a Play Console declaration.
-- **Flag suspicious cancellations:** pairs who keep matching then cancelling (data is now available from `contact_info_redacted` and the location log).
-- **Database performance:** the Supabase advisor lists 48 policies that should cache `auth.uid()`, plus 38 overlapping policies. Not urgent at current traffic.
-- `HANDOFF.md` is outdated; this file replaces it.
-- Symptom Checker uses `claude-sonnet-4-5`. It's still supported, so no change is needed now.
+### Later / needs a decision
+- **Flag suspicious cancellations:** pairs who keep matching and then cancelling.
+- **Database performance:** 48 policies should cache `auth.uid()`, and 38 policies overlap. Not urgent at current traffic.
+- **iOS release:** location code and permission text are ready.
