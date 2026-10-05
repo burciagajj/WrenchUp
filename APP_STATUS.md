@@ -1,14 +1,15 @@
 # WrenchUp — App Status
 
-_Last updated: October 4, 2026_
+_Last updated: October 5, 2026_
 
 WrenchUp is an on-demand mobile mechanic app (like Uber for car repair) for the US and Mexico. Customers request help; verified mechanics drive to them and are paid through Stripe.
 
 **Snapshot**
 - Latest build: Android **build 31** (production, Oct 3). There are no iOS builds yet.
 - Backend: live at `https://wrenchup.expo.app`, last deployed Oct 4 with the cancellation-fee sweep.
-- Database: all 47 migrations are applied to the live Supabase project.
-- Tests: 216 pass (1 skipped).
+- Database: migrations 001–053 and 055 are live. **054 (chat filter) and 056 (security hardening) are written but not applied yet.**
+- Tests: 216 pass (1 skipped). `pnpm check` is clean.
+- Git: everything is committed locally; not pushed yet.
 
 ---
 
@@ -76,30 +77,32 @@ WrenchUp is an on-demand mobile mechanic app (like Uber for car repair) for the 
 
 ## 3. What needs to be worked on
 
-### Must do before launch
-1. **Test the cancellation fee end to end** with your own card:
-   - A long drive, then cancel → Stripe should show a **$5** charge.
-   - A short drive (<0.5 mi), then cancel → **no fee**.
-2. **Finish the Stripe platform questionnaire** in the Stripe Dashboard so mechanics can actually receive payouts. Until then, transfers keep retrying.
-3. **Ship a new build.** Build 31 doesn't have the restored Quick services menu on the "Request a mechanic" screen.
-4. **Commit the work.** About 318 files are uncommitted (192 of them new), including the fee logic. One lost laptop would mean losing all of it.
-5. **Fix the type errors** that `pnpm check` reports:
-   - `book-service.tsx`, `confirm.tsx`: wrong number of arguments.
-   - `request-pending.tsx`, `tracking.tsx`: `user` may be null.
-   - `service-map-hero.tsx`: map style type.
+### Done (Oct 4–5)
+- All work committed; local secrets backups are git-ignored.
+- TypeScript errors fixed.
+- Live-only database changes saved as migrations 048–053.
+- Booking screen and Terms now describe the real $5 distance-based fee (the old $19 and $50 no-show text is gone).
+- Fee decisions are logged in the payment sweep.
+- **Distance tracking bug fixed:** the app re-sent its launch-time location every 2 minutes, which could double the recorded miles and wrongly trigger the fee. Fixed in the database (055, live) and in the app (next build). Every GPS update is now logged in `mechanic_location_events`.
+- Quick services restored on the "Request a mechanic" screen (next build).
 
-   None of these break the current build, but they can hide real bugs.
+### In progress
+1. **Cancellation fee test with a real card** (Johan): one long drive (expect $5) and one short drive (expect no fee).
 
-### Platform leakage (people using the app only to find a mechanic)
-- **The gap:** chat has no contact-info filter, and cancelling before the mechanic drives is free. So a customer and mechanic can swap numbers and finish the deal in cash.
-- **Plan:**
-  1. Have the database hide phone numbers, emails, @handles and words like "WhatsApp" or "Venmo" in chat.
-  2. Add an anti-bypass line to the Terms.
-  3. Flag pairs that repeatedly match and then cancel.
-  4. Give people reasons to stay: rebooking favorite mechanics, plus payment and dispute protection.
+### Waiting for approval
+2. **Apply migration 054:** hides phone numbers, emails and payment apps in chat. The Terms already promise this.
+3. **Apply migration 056:** security hardening from the Supabase advisor (signed-out users can't call internal database functions).
+4. **`eas deploy`:** chat notification privacy fix and fee logging.
+5. **New build:** GPS fix, chat note, fee wording, Quick services.
+6. **Push to GitHub.**
 
-### Housekeeping
-- **3 live database changes aren't saved in the repo:** `parts_reimbursement`, `add_durable_rate_limit_bucket` and `add_customer_rating_columns`. Add numbered files for them under `supabase/migrations/` so the repo matches the live database.
-- **`HANDOFF.md` is out of date** (May 2026, old "Yojitan" name and screens). Update it or replace it with this file.
-- **The Symptom Checker uses an older Claude model** (`claude-sonnet-4-5`). Consider upgrading it.
-- **Recheck the cancellation wording** in the Terms and on the booking screen. Booking currently says "$19 cancellation fee after dispatch", which doesn't match the new $5 distance-based fee.
+### Needs Johan (dashboard / account)
+7. **Stripe platform questionnaire:** mechanics can't receive payouts until it's done; transfers keep retrying.
+8. **Turn on leaked-password protection:** Supabase Dashboard → Authentication → Settings (blocks passwords known from data breaches).
+
+### Next improvements (need a decision)
+- **Background location for mechanics:** distance stops counting when the mechanic leaves the app or locks the screen, so a cancel at that moment may not charge the fee. Needs "Always" location permission, an Android foreground service and a Play Console declaration.
+- **Flag suspicious cancellations:** pairs who keep matching then cancelling (data is now available from `contact_info_redacted` and the location log).
+- **Database performance:** the Supabase advisor lists 48 policies that should cache `auth.uid()`, plus 38 overlapping policies. Not urgent at current traffic.
+- `HANDOFF.md` is outdated; this file replaces it.
+- Symptom Checker uses `claude-sonnet-4-5`. It's still supported, so no change is needed now.
