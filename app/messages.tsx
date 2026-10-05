@@ -353,6 +353,15 @@ export default function MessagesScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
+        <View style={styles.contactNote}>
+          <IconSymbol name="lock.fill" size={12} color="#94A3B8" />
+          <Text style={styles.contactNoteText}>
+            {L(
+              "Phone numbers, emails, and payment apps are hidden in chat. Keeping payment in WrenchUp keeps your refund, dispute, and payout protections.",
+              "Los teléfonos, correos y apps de pago se ocultan en el chat. Pagar dentro de WrenchUp mantiene tus protecciones de reembolso, disputas y pagos.",
+            )}
+          </Text>
+        </View>
         <FlatList
           data={messages}
           keyExtractor={(item) => item.id}
@@ -402,6 +411,23 @@ const styles = StyleSheet.create({
   title: { color: "#F8FAFC", fontSize: 16, fontWeight: "800" },
   keyboardWrap: {
     flex: 1,
+  },
+  contactNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: "rgba(148,163,184,0.12)",
+  },
+  contactNoteText: {
+    flex: 1,
+    color: "#94A3B8",
+    fontSize: 11,
+    lineHeight: 15,
   },
   offerButton: {
     maxWidth: 150,

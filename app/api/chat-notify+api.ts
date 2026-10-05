@@ -140,7 +140,16 @@ export async function POST(request: Request) {
       senderRole === "customer" ? "Customer" : "Mechanic",
     );
     const route = buildChatNotificationRoute(requestId, peerName);
-    const preview = buildChatNotificationBody(message);
+    // The client sends the raw text it typed, so redact it with the same
+    // database function the service_messages trigger uses (migration 054)
+    // before it reaches the push preview. If that fails, don't leak the raw
+    // text — fall back to a generic preview.
+    const redacted = await supabaseRest<string>("/rpc/redact_contact_info", "POST", serviceKey, {
+      p_text: message,
+    }).catch(() => null);
+    const preview = typeof redacted === "string"
+      ? buildChatNotificationBody(redacted)
+      : "New message";
 
     await sendExpoPush(recipientToken, "New Message", preview, {
       service_request_id: requestId,
