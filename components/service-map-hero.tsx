@@ -25,7 +25,7 @@ export function ServiceMapHero({ mapRef, region, customMapStyle, markerCoordinat
       ref={mapRef}
       style={StyleSheet.absoluteFill}
       initialRegion={region}
-      customMapStyle={customMapStyle}
+      customMapStyle={customMapStyle as React.ComponentProps<typeof MapView>["customMapStyle"]}
       showsUserLocation
       showsMyLocationButton={false}
       showsCompass={false}

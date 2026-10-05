@@ -216,8 +216,8 @@ export default function ConfirmScreen() {
       const chargeTotal = editedChargeTotal;
       // Convert from the raw USD fare into what actually gets charged/stored
       // for this region (discount + MXN conversion) — see lib/i18n.ts.
-      const chargeableChargeTotal = toChargeableAmount(chargeTotal, region);
-      const chargeableEstimatedTotal = toChargeableAmount(estimatedTotal, region);
+      const chargeableChargeTotal = toChargeableAmount(chargeTotal);
+      const chargeableEstimatedTotal = toChargeableAmount(estimatedTotal);
       const result = await paymentSheet.present({
         amount: amountToStripeAmount(chargeableChargeTotal, currency),
         estimatedTotal: amountToStripeAmount(chargeableEstimatedTotal, currency),
@@ -271,7 +271,7 @@ export default function ConfirmScreen() {
       // mechanic's payout instead of splitting it the same way as any
       // other price on the platform.
       const chargedBreakdown = deriveServiceAndFeeFromTotal(chargeTotal, feeRate);
-      const platformFeeAmount = toChargeableAmount(chargedBreakdown.fee, region);
+      const platformFeeAmount = toChargeableAmount(chargedBreakdown.fee);
       const mechanicPayout = +(finalPrice - platformFeeAmount).toFixed(2);
 
       const request = await createDispatchRequest(resolved.sessionToken, {
@@ -485,7 +485,7 @@ export default function ConfirmScreen() {
 
         {/* Payment Method Selection */}
         <StripePaymentSheet
-          amount={Math.round(toChargeableAmount(editedChargeTotal, region) * 100)}
+          amount={Math.round(toChargeableAmount(editedChargeTotal) * 100)}
           currency={region === "MX" ? "mxn" : "usd"}
           savedMethods={state.paymentMethods}
           defaultMethodId={state.defaultPaymentMethodId}

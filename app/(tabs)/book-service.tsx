@@ -379,7 +379,7 @@ export default function BookServiceTabScreen() {
       // for this region (discount + MXN conversion) — see lib/i18n.ts. Using
       // the raw USD number directly would charge/store a MX customer at
       // roughly 1/17.5th of the intended amount.
-      const chargeableEstimatedTodayTotal = toChargeableAmount(estimatedTodayTotal, region);
+      const chargeableEstimatedTodayTotal = toChargeableAmount(estimatedTodayTotal);
       const result = await paymentSheet.present({
         amount: amountToStripeAmount(chargeableEstimatedTodayTotal, currency),
         estimatedTotal: amountToStripeAmount(chargeableEstimatedTodayTotal, currency),
@@ -419,7 +419,7 @@ export default function BookServiceTabScreen() {
       // multiplies by 100 with no further currency conversion (see
       // app/api/payment-capture-sweep+api.ts), so these must already be in
       // the region's real charge currency, not raw USD.
-      const chargeableBookingFee = toChargeableAmount(bookingFee, region);
+      const chargeableBookingFee = toChargeableAmount(bookingFee);
       const request = await createDispatchRequest(resolved.sessionToken, {
         customerUserId: user.id,
         customerName: state.userName,
@@ -934,7 +934,7 @@ export default function BookServiceTabScreen() {
           </View>
 
           <StripePaymentSheet
-            amount={Math.round(toChargeableAmount(estimatedTodayTotal, region) * 100)}
+            amount={Math.round(toChargeableAmount(estimatedTodayTotal) * 100)}
             currency={region === "MX" ? "mxn" : "usd"}
             savedMethods={state.paymentMethods}
             defaultMethodId={state.defaultPaymentMethodId}

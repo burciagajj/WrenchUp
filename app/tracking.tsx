@@ -281,7 +281,7 @@ export default function TrackingScreen() {
         }
       }
       dispatch({ type: "UPDATE_JOB_STATUS", payload: { id: job.id, status: "cancelled" } });
-      await saveUserHistory(user.id, {
+      if (user) await saveUserHistory(user.id, {
         jobs: state.jobs.map((item) =>
           item.id === job.id
             ? {
