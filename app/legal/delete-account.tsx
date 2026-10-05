@@ -18,7 +18,7 @@ export default function DeleteAccountInfoScreen() {
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Section title="How to delete your account">
-          Open the WrenchUp app, sign in, then go to Menu → Profile → Settings and tap "Delete account". Confirm the
+          Open the WrenchUp app, sign in, then go to Menu → Profile → Settings and tap “Delete account”. Confirm the
           prompt to permanently delete your account.
         </Section>
 
@@ -29,15 +29,15 @@ export default function DeleteAccountInfoScreen() {
         </Section>
 
         <Section title="What's retained">
-          If you were a mechanic assigned to a job, that job's record is kept for the customer (with the mechanic
+          If you were a mechanic assigned to a job, that job’s record is kept for the customer (with the mechanic
           identity removed) for their own records and any legal, tax, or dispute-resolution obligations. Payment
           records already processed by Stripe are retained by Stripe under its own retention policy, independent of
           your WrenchUp account.
         </Section>
 
         <Section title="Can't sign in?">
-          If you can't access the app to delete your account yourself, email support@wrenchup.app from the address
-          on your account and we'll process the deletion for you.
+          If you can’t access the app to delete your account yourself, email support@wrenchup.app from the address
+          on your account and we’ll process the deletion for you.
         </Section>
       </ScrollView>
     </ScreenContainer>

@@ -171,7 +171,7 @@ export default function PhotoReviewScreen() {
         ))}
 
         {!loading && visibleRows.length === 0 ? (
-          <Text style={styles.emptyText}>No photos to review here. Tap "Load Reviews" to fetch the latest.</Text>
+          <Text style={styles.emptyText}>No photos to review here. Tap “Load Reviews” to fetch the latest.</Text>
         ) : null}
       </ScrollView>
     </ScreenContainer>
