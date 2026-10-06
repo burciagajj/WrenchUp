@@ -121,12 +121,6 @@ const config: ExpoConfig = {
       },
     ],
     [
-      "expo-audio",
-      {
-        microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone.",
-      },
-    ],
-    [
       "expo-image-picker",
       {
         // Used for profile photos, mechanic verification documents, the
@@ -135,19 +129,13 @@ const config: ExpoConfig = {
         // picker at all (crash on launch). use-image-picker.ts only ever
         // requests mediaTypes: ["images"] (no video), so explicitly opt out
         // of the microphone permission this plugin would otherwise also
-        // request/describe — expo-audio above already owns that string for
-        // its own (unrelated) feature, and requesting mic access nobody uses
-        // is exactly the kind of thing App Store review flags.
+        // request/describe — requesting mic access nobody uses is exactly the
+        // kind of thing App Store / Play review flags. (expo-audio and
+        // expo-video were removed for the same reason: unused, and they
+        // added background media-playback + microphone permissions.)
         cameraPermission: "Allow $(PRODUCT_NAME) to use your camera to take verification and service photos.",
         photosPermission: "Allow $(PRODUCT_NAME) to access your photos to upload verification and service photos.",
         microphonePermission: false,
-      },
-    ],
-    [
-      "expo-video",
-      {
-        supportsBackgroundPlayback: true,
-        supportsPictureInPicture: true,
       },
     ],
     [
